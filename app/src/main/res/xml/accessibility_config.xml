@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  packageNames limits this service to Instagram, YouTube, and the system Settings /
+  uninstall screens (only to protect Detach itself from being switched off).
+  Android does not deliver events from any other app (banking, UPI, keyboards...) to it.
+  No flagRetrieveInteractiveWindows: the service cannot list other apps' windows.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:packageNames="com.instagram.android,com.google.android.youtube,com.android.settings,com.google.android.packageinstaller,com.android.packageinstaller,com.samsung.android.packageinstaller,com.miui.packageinstaller"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled|typeViewClicked|typeViewSelected"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="false"
+    android:notificationTimeout="120"
+    android:description="@string/service_description" />
