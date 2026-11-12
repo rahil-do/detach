@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings as SysSettings
 import java.util.Date
+import java.util.UUID
 
 /**
  * "Pause for payments": UPI apps refuse to run while a sideloaded accessibility service is on,
@@ -22,14 +23,15 @@ import java.util.Date
  * WRITE_SECURE_SETTINGS, granted once over adb ([GRANT_COMMAND]). Without it the pause still
  * works, but turning Detach back on is done by hand in Accessibility settings.
  *
- * The reminder time is stored on disk, so it survives the process being killed. Alarms, boot,
- * updates and opening the app only refresh the reminder; [resume] requires an explicit user
- * action. No watcher runs while paused, so Detach cannot know when banking has finished.
+ * A single timer may resume a valid same-boot pause. The optional Usage Access monitor checks
+ * packages only while paused. Without it, the timer cannot know whether banking has finished.
+ * Boot, updates and opening the app never create or renew automatic authorization.
  */
 object Pause {
     /** The longest a pause can be set to; also the sanity limit for a stored end time. */
     const val MAX_MS = 60 * 60_000L
     const val RESUME_AUTHORIZATION_MS = 3 * 60_000L
+    internal const val AUTOMATIC_DELAY_MS = MAX_MS
 
     /** How long the next pause will last: the owner's setting, 1 to 60 minutes. */
     fun durationMs(context: Context) = Settings(context).pauseMinutes * 60_000L
@@ -48,6 +50,15 @@ object Pause {
     private const val KEY_RESUME_AUTHORIZED_AT = "resume_authorized_at"
     private const val KEY_RESUME_AUTHORIZED_ELAPSED = "resume_authorized_elapsed"
     private const val KEY_RESUME_BOOT_COUNT = "resume_boot_count"
+    private const val KEY_TOKEN = "automatic_token"
+    private const val KEY_ELAPSED = "automatic_elapsed"
+    private const val KEY_BOOT = "automatic_boot"
+    private const val KEY_DURATION = "automatic_duration"
+    private const val KEY_ATTEMPTED = "automatic_attempted"
+    private const val KEY_PAYMENT = "payment_package"
+    private const val KEY_SUPPRESSED_PAYMENT = "suppressed_payment"
+    private const val KEY_SUPPRESSED_ELAPSED = "suppressed_elapsed"
+    private const val KEY_SUPPRESSED_BOOT = "suppressed_boot"
 
     private fun prefs(context: Context) = context.getSharedPreferences("pause", Context.MODE_PRIVATE)
 
@@ -83,28 +94,42 @@ object Pause {
     /**
      * Starts a pause. Called by the running service just before it switches itself off.
      * Records the reminder time before the service stops, then schedules one reminder alarm.
+     * A false result means callers must keep protection enabled because persistence failed.
      */
     @Synchronized
-    fun begin(context: Context) {
+    fun begin(context: Context, paymentPackage: String? = null): Boolean {
         val app = context.applicationContext
         val now = System.currentTimeMillis()
         val duration = durationMs(app)
         val until = now + duration
-        prefs(app).edit().putLong(KEY_UNTIL, until).putLong(KEY_STARTED, now)
+        val stored = prefs(app)
+        val saved = stored.edit().putLong(KEY_UNTIL, until).putLong(KEY_STARTED, now)
+            .putString(KEY_TOKEN, UUID.randomUUID().toString())
+            .putLong(KEY_ELAPSED, SystemClock.elapsedRealtime()).putInt(KEY_BOOT, bootCount(app))
+            .putLong(KEY_DURATION, duration).putBoolean(KEY_ATTEMPTED, false)
+            .putString(KEY_PAYMENT, paymentPackage?.takeIf { it in Settings(app).paymentPackages })
+            .remove(KEY_SUPPRESSED_PAYMENT).remove(KEY_SUPPRESSED_ELAPSED).remove(KEY_SUPPRESSED_BOOT)
             .removeResumeAuthorization().commit()
+        if (!saved) {
+            stored.edit().remove(KEY_UNTIL).remove(KEY_STARTED).remove(KEY_TOKEN).removeResumeAuthorization().commit()
+            return false
+        }
         cancelAlarms(app)
         scheduleAlarm(app, until)
+        PauseForegroundMonitor.startForPause(app)
         refreshNotification(app)
+        return true
     }
 
     /**
-     * Ends a pending pause now: turns the service back on if allowed to, otherwise asks the
-     * user to do it. Safe to call any number of times. Returns true if nothing is left to do.
+     * Explicitly authorizes one reconnect and requests secure-settings enablement when allowed.
+     * Returns true when the enable request succeeds; the reconnect still must consume authority.
      */
     @Synchronized
     fun resume(context: Context): Boolean {
         val app = context.applicationContext
         if (!isPending(app)) return true
+        PauseForegroundMonitor.stop(app)
         if (!prefs(app).edit().putLong(KEY_RESUME_AUTHORIZED_AT, System.currentTimeMillis())
                 .putLong(KEY_RESUME_AUTHORIZED_ELAPSED, SystemClock.elapsedRealtime())
                 .putInt(KEY_RESUME_BOOT_COUNT, bootCount(app)).commit()) {
@@ -114,8 +139,8 @@ object Pause {
         }
         cancelAlarms(app)
         if (enableService(app)) {
-            prefs(app).edit().remove(KEY_UNTIL).remove(KEY_STARTED).removeResumeAuthorization().commit()
-            refreshNotification(app) // the service posts the "on" notification once it's connected
+            PauseForegroundMonitor.stop(app)
+            refreshNotification(app)
             return true
         }
         // Can't do it ourselves: the pause is over, and the notification now says so.
@@ -124,7 +149,99 @@ object Pause {
         return false
     }
 
-    /** Allows one reconnect only after an explicit Resume action within the last three minutes. */
+    internal fun automaticToken(context: Context): String? = runCatching {
+        val stored = prefs(context)
+        val now = System.currentTimeMillis()
+        val elapsed = SystemClock.elapsedRealtime()
+        val started = startedAt(context)
+        val beganElapsed = stored.getLong(KEY_ELAPSED, -1L)
+        val duration = stored.getLong(KEY_DURATION, 0L)
+        val wallAge = now - started
+        val elapsedAge = elapsed - beganElapsed
+        if (!isPending(context) || started <= 0L || beganElapsed < 0L ||
+            duration !in 60_000L..MAX_MS || until(context) != started + duration ||
+            stored.getInt(KEY_BOOT, -1) < 0 || stored.getInt(KEY_BOOT, -1) != bootCount(context) ||
+            wallAge !in 0..duration + AUTOMATIC_DELAY_MS || elapsedAge !in 0..duration + AUTOMATIC_DELAY_MS ||
+            kotlin.math.abs(wallAge - elapsedAge) > 5_000L || stored.getBoolean(KEY_ATTEMPTED, true)) null
+        else stored.getString(KEY_TOKEN, null)?.takeIf { it.isNotEmpty() }
+    }.getOrNull()
+
+    internal fun automaticDeadlineElapsed(context: Context): Long = runCatching {
+        val stored = prefs(context)
+        stored.getLong(KEY_ELAPSED, 0L) + stored.getLong(KEY_DURATION, 0L) + AUTOMATIC_DELAY_MS
+    }.getOrDefault(0L)
+
+    internal fun startingPaymentPackage(context: Context): String? = runCatching {
+        prefs(context).getString(KEY_PAYMENT, null)?.takeIf { it in Settings(context).paymentPackages }
+    }.getOrNull()
+
+    internal fun timerDue(context: Context): Boolean = runCatching {
+        automaticToken(context) != null && System.currentTimeMillis() >= until(context) &&
+            SystemClock.elapsedRealtime() >= prefs(context).getLong(KEY_ELAPSED, Long.MAX_VALUE) +
+            prefs(context).getLong(KEY_DURATION, MAX_MS)
+    }.getOrDefault(false)
+
+    @Synchronized
+    internal fun onTimer(context: Context) {
+        val token = automaticToken(context)
+        if (token != null && timerDue(context)) {
+            if (PauseForegroundMonitor.paymentIsKnown(context)) {
+                scheduleAlarm(context, System.currentTimeMillis() + ForegroundPackages.STATE_MAX_MS)
+            } else resumeAutomatically(context, token, false)
+        }
+        remind(context)
+    }
+
+    @Synchronized
+    internal fun onObservedForeground(context: Context, token: String, packageName: String?, paymentForeground: Boolean) {
+        if (token != automaticToken(context) || paymentForeground ||
+            !Settings(context).resumeOnSocialForeground || !PauseForegroundMonitor.hasUsageAccess(context)) return
+        val social = packageName in Targets.PACKAGES
+        if (social || timerDue(context)) resumeAutomatically(context, token, social)
+    }
+
+    private fun resumeAutomatically(context: Context, token: String, social: Boolean): Boolean {
+        if (token != automaticToken(context)) return false
+        val service = ComponentName(context, DetachService::class.java)
+        val enabled = runCatching {
+            SysSettings.Secure.getString(context.contentResolver, SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+                .orEmpty().split(':').any { ComponentName.unflattenFromString(it) == service }
+        }.getOrDefault(true)
+        if (enabled) return false
+        val stored = prefs(context)
+        if (!stored.edit().putBoolean(KEY_ATTEMPTED, true).commit()) return false
+        if (!canSelfEnable(context)) {
+            PauseForegroundMonitor.stop(context)
+            refreshNotification(context)
+            return false
+        }
+        if (!social) {
+            stored.edit().putString(KEY_SUPPRESSED_PAYMENT, stored.getString(KEY_PAYMENT, null))
+                .putLong(KEY_SUPPRESSED_ELAPSED, SystemClock.elapsedRealtime())
+                .putInt(KEY_SUPPRESSED_BOOT, bootCount(context)).commit()
+        }
+        return resume(context)
+    }
+
+    @Synchronized
+    fun shouldAutoPausePayment(context: Context, packageName: String?): Boolean {
+        if (packageName == null) return false
+        val stored = prefs(context)
+        val suppressed = runCatching { stored.getString(KEY_SUPPRESSED_PAYMENT, null) }.getOrNull()
+        if (suppressed != null) {
+            val valid = runCatching {
+                stored.getInt(KEY_SUPPRESSED_BOOT, -1) == bootCount(context) &&
+                    SystemClock.elapsedRealtime() - stored.getLong(KEY_SUPPRESSED_ELAPSED, -1L) in 0..RESUME_AUTHORIZATION_MS
+            }.getOrDefault(false)
+            if (valid && packageName == suppressed) return false
+            if (valid && packageName in Targets.SYSTEM_UI) return false
+            stored.edit().remove(KEY_SUPPRESSED_PAYMENT).remove(KEY_SUPPRESSED_ELAPSED).remove(KEY_SUPPRESSED_BOOT).commit()
+        }
+        val settings = Settings(context)
+        return settings.autoPausePayments && packageName in settings.paymentPackages
+    }
+
+    /** Allows one reconnect after a valid manual or automatic request within three minutes. */
     @Synchronized
     fun consumeResumeAuthorization(context: Context): Boolean {
         val stored = prefs(context)
@@ -146,15 +263,19 @@ object Pause {
 
     @Synchronized
     fun remind(context: Context) {
-        cancelAlarms(context)
-        if (!isPending(context)) return
+        if (!isPending(context)) {
+            cancelAlarms(context)
+            return
+        }
         if (!isExpired(context)) scheduleAlarm(context, until(context))
+        else if (automaticToken(context) == null) cancelAlarms(context)
         refreshNotification(context)
     }
 
     @Synchronized
     internal fun restoreAfterRestart(context: Context) {
-        prefs(context).edit().removeResumeAuthorization().commit()
+        prefs(context).edit().removeResumeAuthorization().remove(KEY_TOKEN).commit()
+        PauseForegroundMonitor.stop(context)
         remind(context)
     }
 
@@ -163,7 +284,10 @@ object Pause {
     fun onServiceStarted(context: Context) {
         val app = context.applicationContext
         cancelAlarms(app)
-        prefs(app).edit().remove(KEY_UNTIL).remove(KEY_STARTED).removeResumeAuthorization().commit()
+        prefs(app).edit().remove(KEY_UNTIL).remove(KEY_STARTED).remove(KEY_TOKEN).remove(KEY_ELAPSED)
+            .remove(KEY_BOOT).remove(KEY_DURATION).remove(KEY_ATTEMPTED).remove(KEY_PAYMENT)
+            .removeResumeAuthorization().commit()
+        PauseForegroundMonitor.stop(app)
         refreshNotification(app)
     }
 
@@ -230,13 +354,13 @@ object Pause {
 }
 
 /**
- * Restores reminders after a reboot or update, or displays the due reminder. No broadcast can
- * resume protection. Not exported: only Android itself and Detach can reach it.
+ * The private timer can spend existing same-boot authority; boot/update only restore reminders.
+ * Legacy resume broadcasts remain ignored. Only Android itself and Detach can reach this receiver.
  */
 class PauseReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Pause.ACTION_REMIND -> Pause.remind(context)
+            Pause.ACTION_REMIND -> Pause.onTimer(context)
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> Pause.restoreAfterRestart(context)
         }

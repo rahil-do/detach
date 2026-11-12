@@ -6,6 +6,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Fingerprint as an alternative to the Detach password. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- Only to restore a payment reminder after a reboot, never to resume protection. -->
@@ -52,7 +55,7 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar"
+            android:theme="@style/Theme.Detach.Dialog"
             android:windowSoftInputMode="stateVisible" />
 
         <!-- "Pause for payments" confirmation, opened from Detach's own notification. Not reachable by other apps. -->
@@ -62,11 +65,11 @@
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:taskAffinity=""
-            android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar" />
+            android:theme="@style/Theme.Detach.Dialog" />
 
         <!--
-          Restores reminders only: Detach's own alarm (explicit intent), and Android's
-          boot / app-updated broadcasts. Not exported, so no other app can send to it.
+          Detach's explicit timer may spend existing pause authority; Android's boot / update
+          broadcasts only restore reminders. Not exported, so no other app can send to it.
         -->
         <receiver
             android:name=".PauseReceiver"
@@ -76,6 +79,16 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".PauseForegroundMonitor"
+            android:exported="false"
+            android:stopWithTask="true"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled, on-device package-only foreground checks during a bounded payment pause to resume accessibility protection; no content or history collection." />
+        </service>
 
         <service
             android:name=".DetachService"

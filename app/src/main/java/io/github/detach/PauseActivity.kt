@@ -37,14 +37,24 @@ class PauseActivity : Activity() {
         col.addView(ui.space(20))
         col.addView(ui.text("Make room for a payment", 23f, strong = true).apply { isAccessibilityHeading = true })
         col.addView(ui.space(12))
-        col.addView(ui.text("Detach’s service and overlays will switch off completely. No background watcher runs.", 15f, ui.sub))
+        val monitored = Settings(this).resumeOnSocialForeground && Pause.canSelfEnable(this) &&
+            PauseForegroundMonitor.hasUsageAccess(this)
+        col.addView(ui.text(if (monitored) {
+            "Accessibility and overlays switch off completely. Your opt-in local app monitor can resume protection when Instagram or YouTube opens."
+        } else {
+            "Accessibility and overlays switch off completely. No app monitor runs in timer-only mode."
+        }, 15f, ui.sub))
         col.addView(ui.space(20))
-        col.addView(ui.note("Reminder after $minutes ${if (minutes == 1) "minute" else "minutes"}. This does not restart protection.").apply {
+        col.addView(ui.note(if (Pause.canSelfEnable(this)) {
+            "Automatic resume after $minutes ${if (minutes == 1) "minute" else "minutes"}. Android may delay the timer. Without app detection, the timer cannot know whether banking has finished."
+        } else {
+            "Reminder after $minutes ${if (minutes == 1) "minute" else "minutes"}. Automatic resume needs the optional USB grant; otherwise turn Detach on in Accessibility settings."
+        }).apply {
             background = ui.shape()
             setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
         })
         col.addView(ui.space(12))
-        col.addView(ui.text("Resume yourself when you’ve finished paying.", 15f, strong = true))
+        col.addView(ui.text("You can always resume sooner from Detach.", 15f, strong = true))
         col.addView(ui.space(24))
         col.addView(ui.primary("Pause protection") { confirm() })
         col.addView(ui.space(4))
@@ -68,7 +78,7 @@ class PauseActivity : Activity() {
         val ok = DetachService.pauseForPayments()
         Toast.makeText(
             this,
-            if (ok) "Protection paused. Resume after paying." else "Detach isn't running",
+            if (ok) "Protection paused. Your payment timer is set." else "Could not pause protection. Check Accessibility or try again.",
             Toast.LENGTH_SHORT,
         ).show()
         finish()

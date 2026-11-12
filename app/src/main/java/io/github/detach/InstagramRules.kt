@@ -14,7 +14,11 @@ import android.graphics.Rect
  * Every signal is detected in at least two independent ways (internal view id AND
  * accessibility label / shape), so one renamed id in an Instagram update doesn't break it.
  */
-class InstagramRules(private val settings: Settings, private val health: Health) {
+class InstagramRules(
+    private val settings: Settings,
+    private val health: Health,
+    private val breather: () -> Set<Breather.Feature> = { emptySet() },
+) {
 
     enum class Tab { HOME, REELS, MESSAGES, SEARCH, PROFILE, UNKNOWN }
 
@@ -54,6 +58,11 @@ class InstagramRules(private val settings: Settings, private val health: Health)
             reset()
             return Decision.NONE
         }
+        val allowed = breather()
+        val allowStories = settings.igStories || Breather.Feature.IG_STORIES in allowed
+        val allowMessages = settings.igMessages || Breather.Feature.IG_DMS in allowed
+        val allowSharedReels = settings.igSharedReels || Breather.Feature.IG_SHARED_REELS in allowed
+        val allowReels = Breather.Feature.IG_REELS in allowed
         val tab = selectedTab(s)
         health.igEval(tab != Tab.UNKNOWN)
 
@@ -64,7 +73,7 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         // direct Story tap. This stays robust when Instagram renames its internal viewer ids.
         if (clips == null && (storyViewer(s) != null || armedStoryViewer(s, clips, now) != null)) {
             endClips()
-            if (!settings.igStories) {
+            if (!allowStories) {
                 storyBlocked = true
                 return Decision(action = Action.Back("Stories disabled"))
             }
@@ -78,7 +87,7 @@ class InstagramRules(private val settings: Settings, private val health: Health)
 
         // Messages includes both the inbox tab and a conversation thread. This runs before any
         // reel handling so a reel cannot inherit an old DM context after messages are disabled.
-        if (!settings.igMessages && (tab == Tab.MESSAGES || isDmThread(s))) {
+        if (!allowMessages && (tab == Tab.MESSAGES || isDmThread(s))) {
             endClips()
             lastCtx = Ctx.OTHER
             return Decision(action = Action.Back("Messages disabled"))
@@ -88,8 +97,8 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         if (tab == Tab.REELS || (clips != null && reelsTabHeader(s))) {
             endClips()
             lastCtx = Ctx.OTHER
-            if (!settings.igReelsTab) return Decision.NONE
-            val action = if (settings.igMessages) Action.ToDms("Instagram Reels tab")
+            if (!settings.igReelsTab || allowReels) return Decision.NONE
+            val action = if (allowMessages) Action.ToDms("Instagram Reels tab")
             else tabNodes(s)[Tab.HOME]?.let { Action.Click(it, "Instagram Reels tab") }
                 ?: Action.Back("Instagram Reels tab")
             return Decision(action = action)
@@ -97,6 +106,10 @@ class InstagramRules(private val settings: Settings, private val health: Health)
 
         // 3. A reel opened somewhere other than the Reels tab
         if (clips != null) {
+            if (allowReels) {
+                endClips()
+                return Decision.NONE
+            }
             if (!clipsOpen && !settings.igReelsTab && lastCtx != Ctx.DM) return Decision.NONE
             if (!clipsOpen) {
                 clipsOpen = true
@@ -109,7 +122,7 @@ class InstagramRules(private val settings: Settings, private val health: Health)
                 clipsSince = now
                 clipsScrolled = false
             }
-            if (!clipsAllowed || lastCtx == Ctx.DM && (!settings.igSharedReels || !settings.igMessages)) {
+            if (!clipsAllowed || lastCtx == Ctx.DM && (!allowSharedReels || !allowMessages)) {
                 return Decision(action = Action.Back("reel not opened from a chat"))
             }
             val key = reelKey(s)
@@ -131,12 +144,12 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         }
 
         // 4. Someone else's profile: name, bio, buttons and highlights stay; posts/reels grid is covered
-        if (settings.igOtherProfiles && !own && isProfile(s)) {
+        if (settings.igOtherProfiles && Breather.Feature.IG_PROFILE_POSTS !in allowed && !own && isProfile(s)) {
             return Decision(cover = profileGridRect(s), coverLabel = "Posts hidden by Detach")
         }
 
         // 5. Search: the search box and account results stay; Explore / result grids are covered
-        if (settings.igExplore && inSearch(s, tab)) {
+        if (settings.igExplore && Breather.Feature.IG_EXPLORE !in allowed && inSearch(s, tab)) {
             gridRect(s, searchBoxBottom(s))?.let {
                 return Decision(
                     cover = it,
@@ -150,13 +163,13 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         // 6. Home: keep the Stories row, cover the feed under it. Once Home has scrolled,
         // Instagram can remove every Home-specific header from the accessibility tree while its
         // selected bottom tab remains visible. That is still the feed, not a reason to uncover it.
-        if (settings.igFeed && (homeWithSelectedTab(s, tab) || homeWithoutSelectedTab(s, tab))) {
+        if (settings.igFeed && Breather.Feature.IG_FEED !in allowed && (homeWithSelectedTab(s, tab) || homeWithoutSelectedTab(s, tab))) {
             return Decision(
-                cover = feedRect(s, keepStories = settings.igStories),
+                cover = feedRect(s, keepStories = allowStories),
                 coverIsHomeFeed = true,
-                coverLabel = if (settings.igStories) "Feed hidden by Detach" else "Stories and feed hidden by Detach",
+                coverLabel = if (allowStories) "Feed hidden by Detach" else "Stories and feed hidden by Detach",
                 // Do not offer a button that returns to Stories when Stories are intentionally hidden.
-                coverBackToTop = settings.igStories,
+                coverBackToTop = allowStories,
             )
         }
         return Decision.NONE

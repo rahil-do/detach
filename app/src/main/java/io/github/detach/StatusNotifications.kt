@@ -20,6 +20,7 @@ object StatusNotifications {
         manager.cancel(LEGACY_REMINDER_ID)
         val paused = Pause.isPending(app)
         val expired = paused && Pause.isExpired(app)
+        val breather = if (paused) 0L else Breather.remainingMs(app)
         if (!paused && (!DetachService.isRunning || !Settings(app).pauseNotification)) {
             manager.cancel(Pause.NOTIFICATION_ID)
             return
@@ -40,14 +41,17 @@ object StatusNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val title = when {
+            !paused && breather > 0L -> "Breather active"
             !paused -> "Protection is on"
             expired -> "Protection is still paused"
             else -> "Protection paused"
         }
         val text = when {
+            !paused && breather > 0L -> "Selected features available for up to ${(breather + 59_999L) / 60_000L} min · usual limits return automatically"
             !paused -> "On-device protection · you're in control"
-            expired -> "Finished paying? Open Detach to resume protection."
-            else -> "Reminder at ${Pause.untilText(app)} · stays off until you resume"
+            expired -> "Timer is due. If protection has not resumed, open Detach."
+            Pause.canSelfEnable(app) -> "Automatic resume after ${Pause.untilText(app)} · open Detach to resume sooner"
+            else -> "Reminder at ${Pause.untilText(app)} · automatic resume needs optional USB setup"
         }
         val publicVersion = Notification.Builder(app, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)

@@ -7,6 +7,13 @@
     <color name="surface">#1B2820</color>
     <color name="accent">#9CCFAF</color>
     <color name="on_accent">#122C1E</color>
+    <color name="disabled_ink">#92A397</color>
+    <color name="disabled_surface">#29392F</color>
+    <color name="control_outline">#718A78</color>
+    <color name="disabled_checked_track">#5D7966</color>
+    <color name="disabled_checked_thumb">#DCE9DD</color>
+    <color name="primary_press">#33122C1E</color>
+    <color name="error">#FFB4AB</color>
     <color name="caution">#E1B971</color>
     <color name="press">#259CCFAF</color>
 </resources>

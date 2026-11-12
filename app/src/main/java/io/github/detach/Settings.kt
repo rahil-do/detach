@@ -28,6 +28,15 @@ class Settings(context: Context) {
 
     var autoPausePayments by flag("auto_pause_payments")
 
+    var resumeOnSocialForeground: Boolean
+        get() = runCatching { p.getBoolean("resume_on_social_foreground", false) }.getOrDefault(false)
+        set(value) {
+            p.edit().putBoolean("resume_on_social_foreground", value).apply()
+            if (!value) PauseForegroundMonitor.stop(app)
+        }
+
+    private val app = context.applicationContext
+
     var paymentPackages: Set<String>
         get() = runCatching { p.getStringSet("payment_packages", Targets.PAYMENT_DEFAULTS) }
             .getOrDefault(Targets.PAYMENT_DEFAULTS).orEmpty().filterTo(mutableSetOf()) { validPaymentPackage(it) }

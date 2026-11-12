@@ -4,7 +4,11 @@ package io.github.detach
  * YouTube: block the Shorts player (Shorts tab, a Short opened from Home, search, a channel…).
  * Normal videos, Home, Subscriptions, Library are untouched.
  */
-class YouTubeRules(private val settings: Settings, private val health: Health) {
+class YouTubeRules(
+    private val settings: Settings,
+    private val health: Health,
+    private val breather: () -> Set<Breather.Feature> = { emptySet() },
+) {
 
     fun evaluate(s: Snap): Decision {
         val pivot = s.visibleId("pivot_bar")
@@ -12,7 +16,7 @@ class YouTubeRules(private val settings: Settings, private val health: Health) {
         val navFound = pivot != null || bar.isNotEmpty()
         health.ytEval(navFound)
         if (navFound) health.seen("yt_bar")
-        if (!settings.ytShorts) return Decision.NONE
+        if (!settings.ytShorts || Breather.Feature.YT_SHORTS in breather()) return Decision.NONE
 
         val shortsTabSelected = bar.any { it.selected && it.label().equals("Shorts", true) }
         val player = shortsPlayer(s)
