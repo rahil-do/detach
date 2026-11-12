@@ -13,6 +13,17 @@ import org.robolectric.RuntimeEnvironment
 class SettingsTest {
     private val context get() = RuntimeEnvironment.getApplication()
 
+    @Test fun `foreground resume monitoring is opt in and persists only explicit consent`() {
+        assertFalse(Settings(context).resumeOnSocialForeground)
+        Settings(context).resumeOnSocialForeground = true
+        assertTrue(Settings(context).resumeOnSocialForeground)
+        Settings(context).resumeOnSocialForeground = false
+        assertFalse(Settings(context).resumeOnSocialForeground)
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit()
+            .putString("resume_on_social_foreground", "true").commit()
+        assertFalse(Settings(context).resumeOnSocialForeground)
+    }
+
     @Test fun `Instagram intentional-use permissions default to enabled and persist changes`() {
         val first = Settings(context)
         assertTrue(first.igStories)

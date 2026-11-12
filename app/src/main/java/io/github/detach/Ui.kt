@@ -5,10 +5,13 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.provider.Settings
 import android.transition.ChangeBounds
@@ -18,10 +21,14 @@ import android.transition.TransitionSet
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.PathInterpolator
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Switch
@@ -36,18 +43,26 @@ class Ui(private val context: Context) {
     val surface = context.getColor(R.color.surface)
     val accent = context.getColor(R.color.accent)
     val onAccent = context.getColor(R.color.on_accent)
+    val disabledInk = context.getColor(R.color.disabled_ink)
+    val disabledSurface = context.getColor(R.color.disabled_surface)
+    val controlOutline = context.getColor(R.color.control_outline)
     val caution = context.getColor(R.color.caution)
     val regular: Typeface = Typeface.create("sans-serif", Typeface.NORMAL)
     val medium: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
 
     fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
 
+    fun colors(enabled: Int, disabled: Int = disabledInk) = ColorStateList(
+        arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+        intArrayOf(disabled, enabled),
+    )
+
     fun text(label: CharSequence, size: Float = 15f, color: Int = fg, strong: Boolean = false) = TextView(context).apply {
         text = label
         textSize = size
-        setTextColor(color)
+        setTextColor(colors(color))
         typeface = if (strong) medium else regular
-        includeFontPadding = false
+        includeFontPadding = true
         setLineSpacing(dp(3).toFloat(), 1f)
     }
 
@@ -65,8 +80,8 @@ class Ui(private val context: Context) {
         if (stroke != null) setStroke(dp(1), stroke)
     }
 
-    fun ripple(fill: Int = Color.TRANSPARENT, stroke: Int? = null) = RippleDrawable(
-        ColorStateList.valueOf(context.getColor(R.color.press)), shape(fill, stroke), shape(Color.WHITE),
+    fun ripple(fill: Int = Color.TRANSPARENT, stroke: Int? = null, highlight: Int = context.getColor(R.color.press)) = RippleDrawable(
+        ColorStateList.valueOf(highlight), shape(fill, stroke), shape(Color.WHITE),
     )
 
     private fun button(label: String, action: () -> Unit) = Button(context, null, android.R.attr.borderlessButtonStyle).apply {
@@ -75,6 +90,7 @@ class Ui(private val context: Context) {
         typeface = medium
         isAllCaps = false
         isSingleLine = false
+        includeFontPadding = true
         gravity = Gravity.CENTER
         minHeight = dp(48)
         minimumHeight = dp(48)
@@ -82,22 +98,36 @@ class Ui(private val context: Context) {
         minimumWidth = dp(48)
         setPadding(dp(16), dp(8), dp(16), dp(8))
         stateListAnimator = null
+        backgroundTintList = null
         setOnClickListener { action() }
     }
 
     fun primary(label: String, action: () -> Unit) = button(label, action).apply {
-        setTextColor(onAccent)
-        background = ripple(accent)
+        setTextColor(colors(onAccent))
+        background = buttonBackground(accent, disabledFill = disabledSurface, focusStroke = onAccent,
+            highlight = context.getColor(R.color.primary_press))
     }
 
     fun secondary(label: String, action: () -> Unit) = button(label, action).apply {
-        setTextColor(fg)
-        background = ripple(stroke = line)
+        setTextColor(colors(fg))
+        background = buttonBackground(stroke = controlOutline)
     }
 
     fun quiet(label: String, action: () -> Unit) = button(label, action).apply {
-        setTextColor(accent)
-        background = ripple()
+        setTextColor(colors(accent))
+        background = buttonBackground()
+    }
+
+    private fun buttonBackground(
+        fill: Int = Color.TRANSPARENT,
+        stroke: Int? = null,
+        disabledFill: Int = Color.TRANSPARENT,
+        focusStroke: Int = accent,
+        highlight: Int = context.getColor(R.color.press),
+    ) = StateListDrawable().apply {
+        addState(intArrayOf(-android.R.attr.state_enabled), shape(disabledFill, stroke))
+        addState(intArrayOf(android.R.attr.state_focused), ripple(fill, focusStroke, highlight))
+        addState(intArrayOf(), ripple(fill, stroke, highlight))
     }
 
     fun toggle(checked: Boolean, label: String) = Switch(context).apply {
@@ -106,15 +136,24 @@ class Ui(private val context: Context) {
         minHeight = dp(48)
         minimumHeight = dp(48)
         minimumWidth = dp(56)
-        setPadding(dp(8), 0, 0, 0)
+        setPaddingRelative(dp(8), 0, 0, 0)
+        splitTrack = false
+        trackDrawable = LayerDrawable(arrayOf(shape(Color.WHITE, radius = 7).apply {
+            setSize(-1, dp(14))
+        })).apply {
+            setLayerInsetRelative(0, dp(4), 0, dp(4), 0)
+            setLayerGravity(0, Gravity.CENTER_VERTICAL or Gravity.FILL_HORIZONTAL)
+        }
         val checkedState = intArrayOf(android.R.attr.state_checked)
-        trackTintList = ColorStateList(arrayOf(checkedState, intArrayOf()), intArrayOf(accent, line))
-        thumbTintList = ColorStateList(arrayOf(checkedState, intArrayOf()), intArrayOf(onAccent, sub))
+        val states = arrayOf(intArrayOf(-android.R.attr.state_enabled, android.R.attr.state_checked),
+            intArrayOf(-android.R.attr.state_enabled), checkedState, intArrayOf())
+        trackTintList = ColorStateList(states, intArrayOf(context.getColor(R.color.disabled_checked_track), disabledSurface, accent, controlOutline))
+        thumbTintList = ColorStateList(states, intArrayOf(context.getColor(R.color.disabled_checked_thumb), disabledInk, onAccent, bg))
     }
 
     fun icon(resource: Int, size: Int = 24, tint: Int = fg) = ImageView(context).apply {
         setImageResource(resource)
-        imageTintList = ColorStateList.valueOf(tint)
+        imageTintList = colors(tint)
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
     }
@@ -169,23 +208,29 @@ class Ui(private val context: Context) {
     fun panel() = shape(bg, line, 18)
 
     fun style(field: EditText) = field.apply {
-        setTextColor(fg)
-        setHintTextColor(sub)
+        setTextColor(colors(fg))
+        setHintTextColor(colors(sub))
         textSize = 16f
         typeface = regular
         minimumHeight = dp(56)
-        backgroundTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()), intArrayOf(accent, line))
-        setPadding(dp(4), dp(14), dp(4), dp(14))
+        backgroundTintList = ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf(android.R.attr.state_focused), intArrayOf()),
+            intArrayOf(disabledInk, accent, controlOutline),
+        )
+        setPaddingRelative(dp(4), dp(14), dp(4), dp(14))
     }
 
     fun style(dialog: AlertDialog) {
         dialog.window?.setBackgroundDrawable(panel())
         for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
             dialog.getButton(which)?.apply {
-                setTextColor(accent)
+                setTextColor(colors(accent))
                 typeface = medium
                 isAllCaps = false
+                isSingleLine = false
+                includeFontPadding = true
                 minimumHeight = dp(48)
+                setPaddingRelative(dp(16), dp(8), dp(16), dp(8))
             }
         }
         dialog.findViewById<TextView>(android.R.id.message)?.setTextColor(sub)
@@ -193,13 +238,64 @@ class Ui(private val context: Context) {
         dialog.findViewById<TextView>(titleId)?.apply {
             setTextColor(fg)
             typeface = medium
+            isSingleLine = false
+            maxLines = Int.MAX_VALUE
+        }
+        dialog.window?.let { window ->
+            systemBars(window)
+            window.setSoftInputMode(window.attributes.softInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv() or
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+        if (context.resources.configuration.screenWidthDp < 360 || context.resources.configuration.fontScale >= 1.3f) {
+            val buttons = listOf(AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL, AlertDialog.BUTTON_POSITIVE)
+                .mapNotNull { dialog.getButton(it) }
+            (buttons.firstOrNull()?.parent as? LinearLayout)?.apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.END
+                for (index in 0 until childCount) {
+                    if (getChildAt(index) !is Button) getChildAt(index).visibility = View.GONE
+                }
+                buttons.forEach { button ->
+                    button.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                }
+            }
+        }
+    }
+
+    fun systemBars(window: Window) {
+        val decor = window.decorView
+        val light = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK != Configuration.UI_MODE_NIGHT_YES
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+        if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = true
+        if (Build.VERSION.SDK_INT >= 30) {
+            val appearance = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            window.insetsController?.setSystemBarsAppearance(if (light) appearance else 0, appearance)
+        } else {
+            val appearance = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            decor.systemUiVisibility = if (light) decor.systemUiVisibility or appearance
+            else decor.systemUiVisibility and appearance.inv()
         }
     }
 
     fun dialogPage(activity: Activity, content: View) {
         activity.window.setBackgroundDrawable(panel())
-        activity.setContentView(content)
-        activity.window.setLayout(minOf(context.resources.displayMetrics.widthPixels - dp(32), dp(420)), ViewGroup.LayoutParams.WRAP_CONTENT)
+        systemBars(activity.window)
+        val viewport = object : FrameLayout(activity) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val available = (dp(resources.configuration.screenHeightDp) - dp(48)).coerceAtLeast(1)
+                val height = if (View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.UNSPECIFIED) available
+                else minOf(available, View.MeasureSpec.getSize(heightMeasureSpec))
+                super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.AT_MOST))
+            }
+        }.apply {
+            addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        activity.setContentView(viewport)
+        val available = dp(context.resources.configuration.screenWidthDp).coerceAtLeast(1)
+        activity.window.setLayout(minOf((available - dp(32)).coerceAtLeast(1), dp(420)), ViewGroup.LayoutParams.WRAP_CONTENT)
+        activity.window.setSoftInputMode(activity.window.attributes.softInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv() or
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         Motion.enter(content)
     }
 }
@@ -236,8 +332,7 @@ object Motion {
 
     fun emphasis(view: View, usable: Boolean) {
         view.animate().cancel()
-        val target = if (usable) 1f else 0.5f
-        if (enabled(view.context)) view.animate().alpha(target).setDuration(150).setStartDelay(0).start()
-        else view.alpha = target
+        view.isEnabled = usable
+        view.alpha = 1f
     }
 }

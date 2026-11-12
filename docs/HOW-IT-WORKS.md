@@ -40,7 +40,10 @@ A lightweight **foreground watchdog** runs only while an overlay is visible. It 
 | `Guard.kt` | Recognises Detach's own system pages; the "Detach is protected" overlay |
 | `UnlockActivity.kt` | Fingerprint / password / 30-second wait window opened from the protection panel |
 | `Auth.kt` | "Fingerprint or password": Android's `BiometricPrompt` with the Detach password as the only fallback; the shared password dialog |
-| `Pause.kt` | Durable pause/reminder lifecycle, explicit-resume authorization, one reminder alarm, optional secure-setting reenable after an explicit user action |
+| `Pause.kt` | Durable pause lifecycle, bounded automatic timer capability, single-use reconnect authorization and one immutable alarm |
+| `PauseForegroundMonitor.kt` | Default-off, consented Usage Access package monitor: one bounded worker, unlocked-only polling, no content/history/network |
+| `PaymentAppPicker.kt` | Searchable local app labels/icons with bounded asynchronous loading and stop-invalidated Save |
+| `Breather.kt`, `BreatherControls.kt` | Authenticated selective temporary permissions, boot/process/clock-bound expiry and native controls |
 | `StatusNotifications.kt` | Silent, local active/paused/reminder notifications with explicit actions |
 | `PauseActivity.kt` | Confirmation window opened from the "Detach is on" notification |
 | `FeedCover.kt` | The opaque cover overlay (`TYPE_ACCESSIBILITY_OVERLAY`, touch-swallowing) |
@@ -61,10 +64,12 @@ A lightweight **foreground watchdog** runs only while an overlay is visible. It 
  Selected payment app → validate foreground package name only
  OR manual pause → Auth.confirm
         ▼
- Remove overlays · cancel worker callbacks · persist pause · disableSelf()
-        │  one immutable reminder alarm, no background watcher or usage polling
+ Persist pause successfully · remove overlays · cancel protection worker · disableSelf()
+        │  one immutable timer; optional consented package monitor
         ▼
- Alarm / boot / update / app open → reminder only; stay paused
+ Valid due timer OR opt-in observed social app → one automatic enable attempt
+        │  requires secure-settings grant; otherwise reminder/manual Settings
+        │  boot/update revoke auto authority; app opens never renew it
         ▼
  Explicit Resume button → short-lived durable user authorization
         │  optional WRITE_SECURE_SETTINGS: restore own service entry
@@ -76,7 +81,9 @@ A lightweight **foreground watchdog** runs only while an overlay is visible. It 
  Authorized start → clear pause/authorization, show active status
 ```
 
-Automatic pauses bypass password and anti-distraction enforcement by design. During a pause, Instagram/YouTube and Settings/uninstall are unrestricted. No observer remains to tell when a banking session has ended, so a reminder cannot safely restart protection. A pending pause must also survive process death between persistence and `disableSelf()`; reconnect without explicit authorization is refused before creating overlays or workers.
+Automatic pauses bypass password and anti-distraction enforcement by design. During a pause, Instagram/YouTube and Settings/uninstall are unrestricted. Timer-only mode cannot know whether banking has finished. Optional monitoring queries package events, never bank nodes, and provides only best-effort fresh-bank deferral. A pending pause survives process death between persistence and `disableSelf()`; reconnect without one-use authorization is refused before creating overlays/workers. Storage failure prevents disabling without a durable pause. See [automatic resume policy](automatic-payment-resume.md).
+
+Breather permissions are a read-only feature snapshot supplied to the rules, not rewritten permanent switches. A running service schedules reevaluation at expiry and on early-end/settings refresh. DMs navigation rechecks effective temporary permission before each action. Settings/Guard and payment routing remain outside those allowances; a payment pause wins. Sessions fail closed on reboot, process restart, invalid data or clock inconsistency.
 
 ## How each screen is recognised
 

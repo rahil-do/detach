@@ -105,12 +105,16 @@ class ManifestTest {
         assertTrue(f == "flagReportViewIds" || value == AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS)
     }
 
-    @Test fun `no usage monitor foreground service or broad package permission is requested`() {
+    @Test fun `optional usage monitor is private and requests only its declared foreground type`() {
         val permissions = info.requestedPermissions.orEmpty().toSet()
-        assertFalse("android.permission.PACKAGE_USAGE_STATS" in permissions)
-        assertFalse(permissions.any { it.startsWith("android.permission.FOREGROUND_SERVICE") })
+        assertTrue("android.permission.PACKAGE_USAGE_STATS" in permissions)
+        assertEquals(setOf("android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_SPECIAL_USE"),
+            permissions.filter { it.startsWith("android.permission.FOREGROUND_SERVICE") }.toSet())
         assertFalse("android.permission.QUERY_ALL_PACKAGES" in permissions)
-        assertEquals(listOf("io.github.detach.DetachService"), info.services.orEmpty().map { it.name })
+        assertEquals(setOf("io.github.detach.DetachService", "io.github.detach.PauseForegroundMonitor"),
+            info.services.orEmpty().map { it.name }.toSet())
+        val monitor = info.services.orEmpty().single { it.name.endsWith(".PauseForegroundMonitor") }
+        assertFalse(monitor.exported)
     }
 
     @Test fun `permission surface is limited to local authentication reminders and explicit resume`() {
@@ -118,6 +122,8 @@ class ManifestTest {
             setOf(
                 "android.permission.POST_NOTIFICATIONS", "android.permission.USE_BIOMETRIC",
                 "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.WRITE_SECURE_SETTINGS",
+                "android.permission.PACKAGE_USAGE_STATS", "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
             ),
             info.requestedPermissions.orEmpty().toSet(),
         )

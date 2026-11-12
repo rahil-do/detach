@@ -8,6 +8,13 @@
     <color name="surface">#EDF1EB</color>
     <color name="accent">#226348</color>
     <color name="on_accent">#FFFFFF</color>
+    <color name="disabled_ink">#5C6960</color>
+    <color name="disabled_surface">#E2E8E0</color>
+    <color name="control_outline">#74837A</color>
+    <color name="disabled_checked_track">#728C7C</color>
+    <color name="disabled_checked_thumb">#F8F9F6</color>
+    <color name="primary_press">#29FFFFFF</color>
+    <color name="error">#A93030</color>
     <color name="caution">#855510</color>
     <color name="press">#1F226348</color>
 </resources>

@@ -46,7 +46,11 @@ This slows down impulsive decisions. It isn't meant to be unbreakable: see [Limi
 
 **Auto-pause** switches off Detach's accessibility service and removes its overlays when a selected payment app opens. Google Pay India, PhonePe, Paytm and BHIM are selected by default; choose other banking apps in Detach. Detection checks the foreground package name, never payment-screen content. A manual pause is also available in the app and through the notification's payment-pause action.
 
-No background watcher runs while paused. The configured 1–60 minutes (default 5) sets a **reminder**, not an automatic restart: explicitly resume after paying. The optional [one-time USB grant](docs/INSTALL.md#optional-let-detach-turn-itself-back-on-after-a-pause) lets the Resume button restore Detach; otherwise use Accessibility settings. An already-blocked payment app may need to be reopened after Detach switches off.
+The configured 1–60 minutes (default 5) sets an **automatic resume timer** when the optional [one-time USB grant](docs/INSTALL.md#optional-let-detach-turn-itself-back-on-after-a-pause) is present; otherwise it is a reminder to resume in Accessibility settings. Timer-only mode has no app monitor and cannot know whether banking has finished. An already-blocked payment app may need to be reopened after Detach switches off.
+
+**Optional app detection** can resume sooner when Instagram or YouTube opens. It is off by default and requires an explicit disclosure, Usage Access and the USB grant. During a payment pause only, a lightweight local foreground service checks recent app-package events about every two seconds while unlocked; it reads no screen content, keeps no usage history, uses no wake lock, and stops after resume. Android/OEM scheduling can delay or prevent detection. See [automatic payment resume](docs/automatic-payment-resume.md) for bounds and banking limitations.
+
+**Take a breather** temporarily unlocks only the features you select for 1–60 minutes after password or biometric authentication. Permanent controls and Settings protection stay unchanged. End it early or let it expire; reboot, process restart or invalid timing state ends it safely. The app chooser shows local app names and logos, and controls have distinct light/dark enabled, disabled and on/off states.
 
 **Safety tradeoff:** opening any selected payment app can trigger a pause without a password. While paused, Instagram/YouTube and disabling or uninstalling Detach are unrestricted. Auto-pause is not tamper-proof banking detection or parental control.
 

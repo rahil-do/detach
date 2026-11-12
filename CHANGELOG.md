@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+- Improve system light/dark compatibility, including readable disabled controls, distinct switch tracks/thumbs, button press/focus feedback and native dialog themes.
+- Replace package-ID payment selection with a searchable local app-name/logo picker; retain unavailable saved selections internally.
+- Restore a bounded same-boot automatic payment-resume timer with the optional USB grant. Without that grant, resume still requires Android Settings.
+- Add separately consented, default-off Usage Access detection for Instagram/YouTube during pauses: package-only checks about every two seconds while unlocked, no wake lock or stored history, and no monitor in timer-only mode.
+- Add authenticated, selective 1–60 minute breathers without changing permanent settings or weakening Settings protection. Expiry, early end, process restart and invalid state restore the usual restrictions.
+- Keep pending-pause reconnects fail-closed, immutable private alarm targets, no runtime networking and no new runtime dependencies. Boot/update and app/notification opens cannot create automatic authority.
+- Timer-only mode cannot know whether banking has finished; Android may delay alarms or monitoring. Selected-bank auto-pause remains an intentional password-bypass tradeoff, not tamper-proof protection.
+
 ## 0.4.0 (2026-11-13)
 
 - Redesigned native screens with restrained light/dark styling, accessible controls, preserved disclosure/scroll state and reduced-motion-aware transitions.

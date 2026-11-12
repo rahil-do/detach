@@ -43,6 +43,9 @@ class PauseTest {
         assertTrue(Pause.resume(ctx))
         assertEquals("$others:$me", enabledList())
         assertEquals(1, Sys.Secure.getInt(ctx.contentResolver, Sys.Secure.ACCESSIBILITY_ENABLED, 0))
+        assertTrue(Pause.isPending(ctx))
+        assertTrue(Pause.consumeResumeAuthorization(ctx))
+        Pause.onServiceStarted(ctx)
         assertFalse(Pause.isPending(ctx))
     }
 
@@ -154,14 +157,16 @@ class PauseTest {
         assertEquals(null, shadowOf(ctx).nextStartedService)
     }
 
-    @Test fun `explicit resume clears both persisted timestamps and all reminder alarms`() {
+    @Test fun `explicit resume keeps pending authorization until the service confirms reconnect`() {
         grant(); setEnabledList(others)
         Pause.begin(ctx)
         assertTrue(Pause.resume(ctx))
+        assertTrue(Pause.isPending(ctx))
+        assertTrue(Pause.consumeResumeAuthorization(ctx))
+        assertFalse(Pause.consumeResumeAuthorization(ctx))
+        Pause.onServiceStarted(ctx)
         assertFalse(Pause.isPending(ctx))
         assertEquals(0L, Pause.startedAt(ctx))
-        assertFalse(ctx.getSharedPreferences("pause", Context.MODE_PRIVATE).contains(authorizationKey))
-        assertFalse(Pause.consumeResumeAuthorization(ctx))
         assertTrue(shadowOf(ctx.getSystemService(AlarmManager::class.java)).scheduledAlarms.isEmpty())
     }
 
@@ -351,6 +356,9 @@ class PauseTest {
         assertEquals(others, enabledList())
         assertTrue(shadowOf(ctx.getSystemService(AlarmManager::class.java)).scheduledAlarms.isEmpty())
         assertTrue(Pause.resume(ctx))
+        assertTrue(Pause.isPending(ctx))
+        assertTrue(Pause.consumeResumeAuthorization(ctx))
+        Pause.onServiceStarted(ctx)
         assertFalse(Pause.isPending(ctx))
     }
 

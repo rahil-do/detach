@@ -105,15 +105,14 @@ class DetachService : AccessibilityService() {
         }
         settings = Settings(this)
         val startupPackage = foreground()
-        if (settings.autoPausePayments && startupPackage in settings.paymentPackages) {
+        if (Pause.shouldAutoPausePayment(this, startupPackage) && Pause.begin(this, startupPackage)) {
             stopProtection()
-            if (Pause.isPending(this)) Pause.refreshNotification(this) else Pause.begin(this)
             disableSelf()
             return
         }
         health = Health(this)
-        ig = InstagramRules(settings, health)
-        yt = YouTubeRules(settings, health)
+        ig = InstagramRules(settings, health) { Breather.activeFeatures(this) }
+        yt = YouTubeRules(settings, health) { Breather.activeFeatures(this) }
         cover = FeedCover(this, onBackToStories = { backToStories() }, onBackToSearch = { backToSearch() })
         lock = Lock(this)
         guard = GuardOverlay(this, onUnlock = { openUnlock() }, onGoBack = { leaveProtectedPage() })
@@ -138,19 +137,42 @@ class DetachService : AccessibilityService() {
         instance = this
         // Running again: any pause is over, and the "on" notification goes (back) up.
         Pause.onServiceStarted(this)
-        requestEval(immediate = true)
+        refreshBreather()
     }
 
     /**
      * "Pause for payments": records the pause, schedules the reminder, swaps the notification,
      * takes down the overlays and switches this service off. Main thread only.
      */
-    private fun pauseNow() {
-        if (pausing) return
+    private fun pauseNow(paymentPackage: String? = null): Boolean {
+        if (pausing) return false
+        if (!Pause.begin(this, paymentPackage)) {
+            if (paymentPackage != null) onInterrupt()
+            return false
+        }
         stopProtection()
-        Pause.begin(this)
         if (::health.isInitialized) health.lastAction("paused for payments")
         disableSelf()
+        return true
+    }
+
+    private val breatherExpiry = Runnable { refreshBreather() }
+
+    private fun refreshBreather() {
+        if (pausing || !::worker.isInitialized) return
+        main.removeCallbacks(breatherExpiry)
+        val remaining = Breather.remainingMs(this)
+        worker.post {
+            if (!pausing) {
+                ig.reset()
+                coverState.clear()
+                pending = null
+                pendingPackage = null
+                requestEval(immediate = true)
+            }
+        }
+        if (remaining > 0L) main.postDelayed(breatherExpiry, remaining + 1L)
+        Pause.refreshNotification(this)
     }
 
     private fun stopProtection() {
@@ -185,9 +207,6 @@ class DetachService : AccessibilityService() {
         if (pausing || !::worker.isInitialized) return
         val activePackage = foreground()
         if (pauseIfPayment(activePackage)) return
-        if (settings.autoPausePayments && pkg in settings.paymentPackages) {
-            return
-        }
         if (pkg in Targets.SYSTEM_UI) {
             if (activePackage == pkg) {
                 coverRevision.incrementAndGet()
@@ -239,11 +258,13 @@ class DetachService : AccessibilityService() {
     private fun foreground(): String? = rootInActiveWindow?.packageName?.toString()
 
     private fun pauseIfPayment(pkg: String?): Boolean {
-        if (!settings.autoPausePayments || pkg !in settings.paymentPackages) return false
+        if (!Pause.shouldAutoPausePayment(this, pkg)) return false
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            if (foreground() == pkg) pauseNow()
+            if (foreground() == pkg) pauseNow(pkg)
         } else {
-            main.post { if (!pausing && foreground() == pkg) pauseNow() }
+            main.post {
+                if (!pausing && foreground() == pkg && Pause.shouldAutoPausePayment(this, pkg)) pauseNow(pkg)
+            }
         }
         return true
     }
@@ -270,6 +291,7 @@ class DetachService : AccessibilityService() {
         val root = rootInActiveWindow
         // Only the package name is looked at here; anything that isn't Instagram/YouTube is ignored.
         val pkg = root?.packageName?.toString()
+        if (pauseIfPayment(pkg)) return
         if (pkg in Targets.SYSTEM_UI) {
             hideCover()
             hideGuard()
@@ -277,7 +299,6 @@ class DetachService : AccessibilityService() {
             requestEval(250)
             return
         }
-        if (pauseIfPayment(pkg)) return
         if (root == null || pkg !in Targets.READABLE) {
             hideCover()
             hideGuard()
@@ -384,10 +405,10 @@ class DetachService : AccessibilityService() {
     }
 
     private fun goToDms(snap: Snap) {
-        if (pausing || !settings.igMessages || foreground() != Targets.INSTAGRAM) return
+        if (pausing || !messagesAllowed() || foreground() != Targets.INSTAGRAM) return
         val tab = ig.tabNodes(snap)[InstagramRules.Tab.MESSAGES]
         if (tab != null && runCatching { tab.node.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)) return
-        if (pausing || !settings.igMessages || foreground() != Targets.INSTAGRAM) return
+        if (pausing || !messagesAllowed() || foreground() != Targets.INSTAGRAM) return
         val ok = runCatching {
             startActivity(
                 Intent(Intent.ACTION_VIEW, Uri.parse("instagram://direct-inbox"))
@@ -397,6 +418,8 @@ class DetachService : AccessibilityService() {
         }.isSuccess
         if (!ok && foreground() == Targets.INSTAGRAM) performGlobalAction(GLOBAL_ACTION_BACK)
     }
+
+    private fun messagesAllowed() = settings.igMessages || Breather.allows(this, Breather.Feature.IG_DMS)
 
     /** "Back to stories" on the cover: re-tapping Home makes Instagram scroll to the top. */
     private fun backToStories() {
@@ -596,7 +619,7 @@ class DetachService : AccessibilityService() {
          */
         fun pauseForPayments(): Boolean {
             val s = instance ?: return false
-            return runCatching { s.pauseNow() }.isSuccess
+            return runCatching { s.pauseNow() }.getOrDefault(false)
         }
 
         fun refreshSettings() {
@@ -604,7 +627,7 @@ class DetachService : AccessibilityService() {
             service.main.post {
                 if (!service.pausing) {
                     service.updateEventFilter()
-                    service.requestEval(immediate = true)
+                    service.refreshBreather()
                 }
             }
         }

@@ -437,7 +437,9 @@ class DetachServiceConnectionTest {
         ForegroundServiceShadow.activeRoot = AccessibilityNodeInfo.obtain().apply { packageName = "com.phonepe.app" }
         connect()
         assertTrue(ForegroundServiceShadow.disabled)
-        assertEquals(until, Pause.until(service))
+        // Reconnecting over a selected bank starts a fresh payment pause instead of protecting it.
+        assertTrue(Pause.isPending(service))
+        assertTrue(Pause.until(service) >= until)
         assertUninitialized()
         assertFalse(Pause.consumeResumeAuthorization(service))
     }

@@ -37,7 +37,9 @@ Enable Detach explicitly in Android Accessibility settings. During a pending pay
 | `YouTubeRulesTest` | Shorts tab and player, a fake "Home" element that must never be tapped |
 | `GuardTest` | Which Settings and uninstall pages are protected, and which are not |
 | `LockTest` | Password check, lockout after 5 wrong tries, nothing stored in plain text |
-| `PauseTest`, `SettingsTest` | Explicit resume, reminder-only lifecycle, single-use/expiry/boot-bound authorization, disk failures, selected payment-package filtering |
+| `PauseTest`, `AutomaticPauseTest`, `PauseForegroundMonitorTest`, `SettingsTest` | Explicit/automatic resume, timer preservation, lifecycle/permission stop, one-use/boot-bound authority, storage failures and package filtering |
+| `BreatherTest`, `BreatherControlsTest`, `BreatherRulesTest`, `BreatherServiceIntegrationTest` | Fresh authentication, lifecycle revocation, selective allowances, early end and no-new-event expiry |
+| `ThemeCompatibilityTest`, `PaymentAppPickerTest` | Day/night state contrast, accessible controls, local labels/icons, bounded loading and host-stop invalidation |
 | `DetachServiceTest`, `CoverStateTest`, `FeedCoverTest`, `GuardOverlayTest` | Startup refusal during pauses, payment content rejection, stale actions, opaque/window-clipped covers, loading transitions and accessible protection panels |
 | `OverlaySnapshotTest`, `InspectorTest` | Foreign-package/password subtrees, debug-only social inspection and release silence |
 | `StatusNotificationsTest`, `HealthNotificationsTest` | Private/local immutable notification actions, deduplication and recovery |
@@ -88,12 +90,14 @@ Then update the fingerprint in `SECURITY.md`.
 - [ ] Detach's Accessibility page, App info and uninstall prompt → "Detach is protected"; Go back works; password/30 s unlock works; Wi-Fi settings not covered
 - [ ] Password: set, switch asks for it, Change asks for current, Remove asks, `*` masking
 - [ ] Fresh start of Instagram (force-close it first): the feed is covered without switching tabs
-- [ ] Pause: notification → fingerprint or password → paused status; no overlay/worker remains; opening Instagram, a due reminder, reboot and an app/notification open never resume protection
+- [ ] Pause: confirmation → no protection overlay/worker. Timer-only starts no monitor; same-boot timer auto-resumes only with the secure-settings grant. Reboot/update revoke automatic authority; app/notification opens never renew it
 - [ ] Explicit Resume works: with the optional existing secure-settings grant it reenables directly; without it, completing Accessibility within three minutes works and a stale authorization is rejected
 - [ ] Auto-pause: selected payment package foreground disables the service before content inspection; background events do not pause a different foreground app. Use a consented test app or a test account, never record real payment content
-- [ ] Reconnect after a pending pause fails closed without authorization; selected payment foreground still refuses initialization after explicit Resume
+- [ ] Pending-pause reconnect fails closed without authority; selected-payment foreground rejects explicit Resume except the documented bounded original-bank timer suppression
 - [ ] Reminder duration: − and + change it, and ask for fingerprint or password when a password is set
-- [ ] Auto-pause disclosure clearly explains that opening a selected app bypasses password protection until explicit Resume
+- [ ] Auto-pause disclosure explains the password bypass and timer-only banking limitation; app monitoring defaults off, requires disclosure+both grants and stops on revoke/opt-out/resume/off-screen polling
+- [ ] Breather always authenticates start/extension, restores only selected restrictions on expiry/early end, survives no process/boot restart, and never relaxes Guard or payment priority
+- [ ] Protected picker/consent dialogs close on host stop; stale Save/Enable and queued authentication cannot reuse the prior visit
 - [ ] Light/dark UI, large text, rotation, preserved disclosures/scroll, animations disabled, repeated expansion, and diagnostics notification navigation remain usable
 - [ ] Status notifications stay silent/private, compatibility alerts deduplicate/recover, and release DUMP/TRACE broadcasts produce no inspector output
 - [ ] Fingerprint unlocks the switches and the "Detach is protected" screen; Change/Remove password still ask for the typed password

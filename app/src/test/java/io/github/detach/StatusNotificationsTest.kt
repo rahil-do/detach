@@ -113,7 +113,7 @@ class StatusNotificationsTest {
         assertEquals("Protection paused", notification.extras.getString(Notification.EXTRA_TITLE))
         val text = notification.extras.getString(Notification.EXTRA_TEXT).orEmpty()
         assertTrue(text.contains("Reminder at ${Pause.untilText(context)}"))
-        assertTrue(text.contains("stays off until you resume"))
+        assertTrue(text.contains("automatic resume needs optional USB setup"))
         assertTrue(notification.actions.isNullOrEmpty())
         assertEquals(MainActivity::class.java.name, shadowOf(notification.contentIntent).savedIntent.component?.className)
         assertTrue(shadowOf(notification.contentIntent).isImmutable)
@@ -137,7 +137,7 @@ class StatusNotificationsTest {
         StatusNotifications.refresh(context)
 
         assertEquals("Protection is still paused", status().extras.getString(Notification.EXTRA_TITLE))
-        assertTrue(status().extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("Open Detach to resume"))
+        assertTrue(status().extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("open Detach"))
         assertTrue(status().actions.isNullOrEmpty())
         assertEquals(until, Pause.until(context))
         assertEquals("other/service", SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES))

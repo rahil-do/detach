@@ -2,6 +2,7 @@ package io.github.detach
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.hardware.biometrics.BiometricManager
@@ -18,6 +19,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -94,7 +96,7 @@ class UiTest {
         assertEquals("Enter password", shadowOf(dialog).title.toString())
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
         val before = Settings(activity).pauseMinutes
-        views(activity).first { it.contentDescription == "Increase reminder by one minute" }.performClick()
+        views(activity).first { it.contentDescription == "Increase payment pause by one minute" }.performClick()
         assertEquals(before, Settings(activity).pauseMinutes)
         dialog = ShadowAlertDialog.getLatestAlertDialog()
         assertEquals("Enter password", shadowOf(dialog).title.toString())
@@ -133,7 +135,7 @@ class UiTest {
         var scroll = views(activity).filterIsInstance<ScrollView>().first()
         scroll.scrollTo(0, 400)
         assertEquals(400, scroll.scrollY)
-        views(activity).first { it.contentDescription == "Increase reminder by one minute" }.performClick()
+        views(activity).first { it.contentDescription == "Increase payment pause by one minute" }.performClick()
         layout(activity)
         assertTrue(disclosure(activity, "instagram-options").isSelected)
         assertTrue(disclosure(activity, "payment-options").isSelected)
@@ -151,8 +153,8 @@ class UiTest {
         Settings(context).pauseMinutes = 1
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         disclosure(activity, "payment-options").performClick()
-        assertFalse(views(activity).first { it.contentDescription == "Decrease reminder by one minute" }.isEnabled)
-        views(activity).first { it.contentDescription == "Increase reminder by one minute" }.performClick()
+        assertFalse(views(activity).first { it.contentDescription == "Decrease payment pause by one minute" }.isEnabled)
+        views(activity).first { it.contentDescription == "Increase payment pause by one minute" }.performClick()
         assertEquals(2, Settings(activity).pauseMinutes)
         assertTrue(disclosure(activity, "payment-options").isSelected)
     }
@@ -164,6 +166,52 @@ class UiTest {
         toggle(activity, "Auto-pause for payment apps").performClick()
         assertFalse(Settings(activity).autoPausePayments)
         assertEquals(before, Settings(activity).paymentPackages)
+    }
+
+    @Test fun `foreground monitoring stays opt in until disclosure is accepted with both grants`() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        disclosure(activity, "payment-options").performClick()
+        toggle(activity, "Resume when Instagram or YouTube opens").performClick()
+        assertFalse(Settings(activity).resumeOnSocialForeground)
+        val dialog = ShadowAlertDialog.getLatestAlertDialog()
+        assertEquals("Enable local app detection?", shadowOf(dialog).title.toString())
+        assertEquals("Review setup", dialog.getButton(AlertDialog.BUTTON_POSITIVE).text.toString())
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
+        assertFalse(Settings(activity).resumeOnSocialForeground)
+    }
+
+    @Test fun `monitor consent is revoked when the settings visit ends`() {
+        shadowOf(context).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        shadowOf(context.getSystemService(AppOpsManager::class.java)).setMode(
+            AppOpsManager.OPSTR_GET_USAGE_STATS, context.applicationInfo.uid, context.packageName, AppOpsManager.MODE_ALLOWED,
+        )
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        disclosure(activity, "payment-options").performClick()
+        toggle(activity, "Resume when Instagram or YouTube opens").performClick()
+        val dialog = ShadowAlertDialog.getLatestAlertDialog()
+        val enable = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        assertEquals("Enable", enable.text.toString())
+        controller.pause().stop()
+        controller.start().resume().visible()
+        enable.performClick()
+        assertFalse(dialog.isShowing)
+        assertFalse(Settings(activity).resumeOnSocialForeground)
+    }
+
+    @Test fun `accepted monitor consent changes only the opt in without starting a watcher`() {
+        shadowOf(context).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        shadowOf(context.getSystemService(AppOpsManager::class.java)).setMode(
+            AppOpsManager.OPSTR_GET_USAGE_STATS, context.applicationInfo.uid, context.packageName, AppOpsManager.MODE_ALLOWED,
+        )
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        disclosure(activity, "payment-options").performClick()
+        toggle(activity, "Resume when Instagram or YouTube opens").performClick()
+        ShadowAlertDialog.getLatestAlertDialog().getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertTrue(Settings(activity).resumeOnSocialForeground)
+        assertFalse(Pause.isPending(activity))
+        assertNull(shadowOf(context).nextStartedService)
     }
 
     @Test fun `paused status offers explicit resume and does not show setup as an error`() {
@@ -284,7 +332,7 @@ class UiTest {
         disclosure(activity, "payment-options").performClick()
         val notice = views(activity).filterIsInstance<TextView>().first { it.text.contains("bypasses your password") }
         assertEquals(View.VISIBLE, notice.visibility)
-        assertTrue(notice.text.contains("until you resume"))
+        assertTrue(notice.text.contains("until protection resumes"))
         assertTrue(notice.text.contains("embedded payments are not"))
     }
 

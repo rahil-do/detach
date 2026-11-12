@@ -5,11 +5,46 @@
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:textColorPrimary">@color/ink</item>
         <item name="android:textColorSecondary">@color/secondary_ink</item>
+        <item name="android:textColorTertiary">@color/secondary_ink</item>
+        <item name="android:textColorHint">@color/secondary_ink</item>
+        <item name="android:textColorLink">@color/accent</item>
+        <item name="android:colorControlNormal">@color/control_outline</item>
+        <item name="android:colorControlActivated">@color/accent</item>
+        <item name="android:colorControlHighlight">@color/press</item>
+        <item name="android:colorButtonNormal">@color/surface</item>
+        <item name="android:colorError">@color/error</item>
+        <item name="android:alertDialogTheme">@style/Theme.Detach.AlertDialog</item>
         <item name="android:colorBackground">@color/window</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">@color/window</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@color/window</item>
+        <item name="android:navigationBarColor">@color/window</item>
+    </style>
+    <style name="Theme.Detach.AlertDialog" parent="android:Theme.DeviceDefault.Light.Dialog.Alert">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:textColorSecondary">@color/secondary_ink</item>
+        <item name="android:textColorTertiary">@color/secondary_ink</item>
+        <item name="android:textColorHint">@color/secondary_ink</item>
+        <item name="android:textColorLink">@color/accent</item>
+        <item name="android:colorControlNormal">@color/control_outline</item>
+        <item name="android:colorControlActivated">@color/accent</item>
+        <item name="android:colorControlHighlight">@color/press</item>
+        <item name="android:colorButtonNormal">@color/surface</item>
+        <item name="android:colorError">@color/error</item>
+        <item name="android:colorBackground">@color/window</item>
+        <item name="android:windowBackground">@color/window</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="Theme.Detach.Dialog" parent="Theme.Detach.AlertDialog">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Detach.AlertDialog</item>
+        <item name="android:windowSoftInputMode">adjustResize</item>
+        <item name="android:windowMinWidthMajor">0dp</item>
+        <item name="android:windowMinWidthMinor">0dp</item>
     </style>
 </resources>

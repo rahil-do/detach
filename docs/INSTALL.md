@@ -79,7 +79,7 @@ When the top section says **Protection is on**, you're done. Open Instagram: the
 
 ### Optional: let Detach turn itself back on after a pause
 
-[Pause for payments](USING.md#pause-for-payments) switches Detach off until you explicitly resume. The 1–60 minute setting (default 5) is only a reminder. The optional `WRITE_SECURE_SETTINGS` grant lets your **Resume** tap restore Detach without a separate Accessibility-settings step. It never enables automatic restart over a payment screen. Grant it once with USB debugging on (see [Option B](#option-b-install-from-a-computer-over-usb)); it survives updates and reboots, and is lost if Detach is uninstalled:
+[Pause for payments](USING.md#pause-for-payments) switches Accessibility off. The optional `WRITE_SECURE_SETTINGS` grant enables timed automatic resume as well as direct **Resume** taps. The 1–60 minute setting (default 5) is a reminder without that grant. Timer-only mode cannot tell whether banking has finished and can resume over an open bank; choose enough time. Grant once with USB debugging on (see [Option B](#option-b-install-from-a-computer-over-usb)); it survives updates and reboots, and is lost if Detach is uninstalled:
 
 ```sh
 adb shell pm grant io.github.detach android.permission.WRITE_SECURE_SETTINGS
@@ -93,9 +93,9 @@ Detach uses this permission for one thing: adding its own entry back to Android'
 
 ### Payment auto-pause and older installations
 
-Choose your payment and banking apps in Detach. Google Pay India, PhonePe, Paytm and BHIM are selected initially. Auto-pause checks only foreground package metadata, then disables the accessibility service without a password prompt. This deliberately makes payment compatibility more important than anti-distraction enforcement: selected apps can be used to bypass blocking, and protection remains off until explicit resume.
+Choose your payment and banking apps by name/logo in Detach. Google Pay India, PhonePe, Paytm and BHIM are selected initially. Auto-pause checks only foreground package metadata, then disables Accessibility without a password prompt. This deliberately makes payment compatibility more important than anti-distraction enforcement: selected apps can bypass blocking until protection resumes.
 
-The older Usage-access watcher has been removed. There is no foreground service or usage-history polling during a pause; opening Instagram or YouTube does not end it. If an older install was granted Usage access, you can revoke it in Android Settings; this version does not request or use it.
+Foreground app detection is a new, separate **off-by-default** opt-in, even if an older version had Usage Access. Enable **Resume when Instagram or YouTube opens**, review the disclosure and grant Usage Access through Android Settings; the USB grant is also required. Return and explicitly enable the option after setup. A private local foreground monitor checks package events only during pauses while unlocked, with no saved history or network access. Revoking Usage Access or turning the feature off stops monitoring. Timer-only mode needs no Usage Access. See [automatic payment resume](automatic-payment-resume.md) for timing, lifecycle and bank-detection limits.
 
 ### Recommended next steps
 - **Set a password** in Detach (Password lock → Set password). Without one, the "Detach is protected" screen only asks for your fingerprint, or for a 30-second wait if the phone has none.
@@ -127,4 +127,4 @@ Forgot the password? From a computer: `adb uninstall io.github.detach`.
 | Detach's badge says **Off** after a while | Your phone stopped it. Turn it back on in Accessibility, and set battery to **Unrestricted** (see above). Using **Force stop** on Detach also turns its Accessibility off. |
 | The feed or Reels show again after an Instagram update | Open Detach → **Diagnostics**. If items say "not yet" or show old times, the layout changed. Report it (see [SECURITY.md](../SECURITY.md#reporting)) or update the rules ([MAINTAINING.md](MAINTAINING.md)). |
 | A UPI app refuses to open | Some refuse while any sideloaded Accessibility app is on: use [Pause for payments](USING.md#pause-for-payments). Others refuse while **Developer options / USB debugging** is on: turn Developer options off. |
-| Detach stays off after a pause | This is intentional: the timer is a reminder, not a restart. Open Detach and tap **Resume** after paying. Without the optional USB grant, complete the Accessibility-settings step. |
+| Detach stays off after a pause | Automatic resume needs the optional USB grant and a valid same-boot timer. Android can delay alarms or deny app monitoring. Open Detach and tap **Resume**; without the grant, complete the Accessibility-settings step within three minutes. |
