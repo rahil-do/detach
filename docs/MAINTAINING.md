@@ -17,15 +17,14 @@
 ./gradlew assembleRelease   # app/build/outputs/apk/release/app-release.apk (minified, signed)
 ./gradlew lintDebug         # must report 0 errors
 ./gradlew testDebugUnitTest  # the test suite; needs no phone
+./gradlew testReleaseUnitTest # release privacy gates; needs no phone
 ```
 
-Install and enable on a test phone:
+Install on a development-only test phone:
 ```sh
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-# enable without losing other accessibility services:
-cur=$(adb shell settings get secure enabled_accessibility_services)
-adb shell settings put secure enabled_accessibility_services "$cur:io.github.detach/io.github.detach.DetachService"
 ```
+Enable Detach explicitly in Android Accessibility settings. During a pending payment pause, first tap Resume in Detach and complete the Settings flow within three minutes. Do not replace a user's signed release with a debug build; install a verified, same-key release update with `adb install -r` to preserve data.
 ⚠️ Don't use `adb shell am force-stop io.github.detach`: Android then switches Detach's Accessibility off.
 
 ## Tests
@@ -38,7 +37,11 @@ adb shell settings put secure enabled_accessibility_services "$cur:io.github.det
 | `YouTubeRulesTest` | Shorts tab and player, a fake "Home" element that must never be tapped |
 | `GuardTest` | Which Settings and uninstall pages are protected, and which are not |
 | `LockTest` | Password check, lockout after 5 wrong tries, nothing stored in plain text |
-| `PauseTest` | Re-enabling keeps other accessibility services intact; forged or stray resume signals can't switch Detach on |
+| `PauseTest`, `SettingsTest` | Explicit resume, reminder-only lifecycle, single-use/expiry/boot-bound authorization, disk failures, selected payment-package filtering |
+| `DetachServiceTest`, `CoverStateTest`, `FeedCoverTest`, `GuardOverlayTest` | Startup refusal during pauses, payment content rejection, stale actions, opaque/window-clipped covers, loading transitions and accessible protection panels |
+| `OverlaySnapshotTest`, `InspectorTest` | Foreign-package/password subtrees, debug-only social inspection and release silence |
+| `StatusNotificationsTest`, `HealthNotificationsTest` | Private/local immutable notification actions, deduplication and recovery |
+| `UiTest` | Authentication, disclosures/scroll state, diagnostics routing, reduced motion and accessible controls |
 | `ManifestTest` | No network permission, only the launcher screen exported, backup off, the accessibility package list matches the code |
 
 When a real-world bug is fixed, add a test that reproduces the screen that caused it (dump it with the inspector, see below). The tests check the rules, not the phone: overlays, fingerprint prompts and the pause itself still need the smoke test on a device.
@@ -74,7 +77,7 @@ Then update the fingerprint in `SECURITY.md`.
 5. Share `dist/Detach-<version>.apk`. On GitHub, attach it to a Release together with the SHA-256.
 
 ### Smoke-test checklist
-- [ ] Setup card shows on a fresh install; **● Active** after enabling
+- [ ] Setup guidance shows on a fresh install; **Protection is on** after enabling
 - [ ] Instagram Home: stories visible, feed covered, "Back to stories" works
 - [ ] Reels tab → DMs
 - [ ] Reel from a DM plays; swiping to the next one goes back to the chat
@@ -85,8 +88,14 @@ Then update the fingerprint in `SECURITY.md`.
 - [ ] Detach's Accessibility page, App info and uninstall prompt → "Detach is protected"; Go back works; password/30 s unlock works; Wi-Fi settings not covered
 - [ ] Password: set, switch asks for it, Change asks for current, Remove asks, `*` masking
 - [ ] Fresh start of Instagram (force-close it first): the feed is covered without switching tabs
-- [ ] Pause: notification → fingerprint or password → "paused until…"; a UPI app opens; opening Instagram ends the pause within a couple of seconds; otherwise it ends on time; "Resume now" works
-- [ ] Pause length: − and + change it, and ask for fingerprint or password when a password is set
+- [ ] Pause: notification → fingerprint or password → paused status; no overlay/worker remains; opening Instagram, a due reminder, reboot and an app/notification open never resume protection
+- [ ] Explicit Resume works: with the optional existing secure-settings grant it reenables directly; without it, completing Accessibility within three minutes works and a stale authorization is rejected
+- [ ] Auto-pause: selected payment package foreground disables the service before content inspection; background events do not pause a different foreground app. Use a consented test app or a test account, never record real payment content
+- [ ] Reconnect after a pending pause fails closed without authorization; selected payment foreground still refuses initialization after explicit Resume
+- [ ] Reminder duration: − and + change it, and ask for fingerprint or password when a password is set
+- [ ] Auto-pause disclosure clearly explains that opening a selected app bypasses password protection until explicit Resume
+- [ ] Light/dark UI, large text, rotation, preserved disclosures/scroll, animations disabled, repeated expansion, and diagnostics notification navigation remain usable
+- [ ] Status notifications stay silent/private, compatibility alerts deduplicate/recover, and release DUMP/TRACE broadcasts produce no inspector output
 - [ ] Fingerprint unlocks the switches and the "Detach is protected" screen; Change/Remove password still ask for the typed password
 - [ ] Leave Instagram while the cover is up → cover gone (`adb shell dumpsys window windows | grep -c "Detach feed cover"` → 0)
 
@@ -112,7 +121,7 @@ Symptoms: the feed shows again, Reels aren't redirected, Diagnostics lines stop 
 4. Update the IDs/labels in `InstagramRules.kt` / `YouTubeRules.kt` / `Guard.kt`. **Add** the new signal alongside the old one rather than replacing it, since different users run different app versions. The tables in [HOW-IT-WORKS.md](HOW-IT-WORKS.md) list every signal.
 5. Rebuild, test, release.
 
-**Privacy when debugging:** dumps and traces contain on-screen text from Instagram (usernames, DM previews), cut to 40 characters. They stay on your computer. Don't paste them into public issues without removing personal content.
+**Privacy when debugging:** only debug builds register the DUMP/TRACE receiver, which requires Android's `DUMP` permission. Dumps allow Instagram/YouTube nodes only, skip foreign-package/password subtrees and reject payment/SystemUI/Settings roots. Non-password social text (usernames, DM previews) can still appear in the phone's local log and in any file you copy to the computer. Never use tracing on private screens or paste logs into public issues without redaction. Production installs must remain signed release builds.
 
 ## Adding another app (e.g. Facebook, Snapchat)
 

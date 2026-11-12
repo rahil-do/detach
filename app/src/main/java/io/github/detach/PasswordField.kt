@@ -28,6 +28,7 @@ fun passwordEditText(context: Context, hint: String): EditText = EditText(contex
     isSingleLine = true
     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or
         InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    Ui(context).style(this)
     transformationMethod = Asterisks
     importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
 }

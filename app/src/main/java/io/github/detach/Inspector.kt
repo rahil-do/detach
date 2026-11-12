@@ -22,31 +22,34 @@ object Inspector {
     var tracing = false
 
     fun dump(root: AccessibilityNodeInfo?) {
+        if (!BuildConfig.DEBUG) return
         if (root == null) {
             Log.i(TAG, "dump: no active window")
             return
         }
         val pkg = root.packageName?.toString()
-        if (pkg !in Targets.ALL) {
+        if (pkg !in Targets.PACKAGES) {
             // Never print other apps' screens.
             Log.i(TAG, "dump: active window is not one Detach watches")
             return
         }
         Log.i(TAG, "===== DUMP BEGIN $pkg =====")
-        walk(root, 0)
+        walk(root, 0, pkg)
         Log.i(TAG, "===== DUMP END =====")
     }
 
-    private fun walk(node: AccessibilityNodeInfo, depth: Int) {
-        if (depth > 60) return
+    private fun walk(node: AccessibilityNodeInfo, depth: Int, pkg: String?) {
+        if (depth > 60 || node.packageName?.toString() != pkg) return
         Log.i(TAG, describe(node, depth))
+        if (node.isPassword) return
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            walk(child, depth + 1)
+            walk(child, depth + 1, pkg)
         }
     }
 
     fun describe(node: AccessibilityNodeInfo, depth: Int = 0): String {
+        if (node.packageName?.toString() !in Targets.PACKAGES || node.isPassword) return "[redacted]"
         val r = Rect()
         node.getBoundsInScreen(r)
         val id = node.viewIdResourceName?.substringAfter(":id/") ?: "-"
@@ -64,13 +67,13 @@ object Inspector {
     }
 
     fun trace(event: AccessibilityEvent) {
-        if (!tracing) return
+        if (!BuildConfig.DEBUG || !tracing || event.isPassword || event.packageName?.toString() !in Targets.PACKAGES) return
         val src = event.source
         Log.i(
             TAG,
             "EV ${AccessibilityEvent.eventTypeToString(event.eventType)} pkg=${event.packageName} " +
                 "cls=${event.className} ch=${event.contentChangeTypes} " +
-                "src=${src?.let { describe(it) } ?: "-"}"
+                "src=${src?.takeIf { it.packageName == event.packageName }?.let { describe(it) } ?: "-"}"
         )
     }
 

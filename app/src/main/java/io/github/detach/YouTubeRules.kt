@@ -40,12 +40,13 @@ class YouTubeRules(private val settings: Settings, private val health: Health) {
     private fun shortsPlayer(s: Snap): Boolean {
         for (id in listOf("reel_recycler", "reel_player_page_container", "shorts_player_container")) {
             val n = s.largestVisibleId(id) ?: continue
-            if (n.r.height() > s.h / 2) return true
+            if (n.r.height() > s.bounds.height() / 2) return true
         }
         // Fallback: any large on-screen element whose id mentions shorts/reel_player
         return s.anyVisible {
             val id = it.id.orEmpty()
-            (id.startsWith("shorts_") || id.startsWith("reel_player")) && it.r.height() > s.h / 2
+            (id.startsWith("shorts_player") || id.startsWith("shorts_video") || id.startsWith("reel_player")) &&
+                it.r.height() > s.bounds.height() / 2
         }
     }
 }

@@ -128,6 +128,93 @@ class InstagramRulesTest {
 
     // ---- reels ----
 
+    @Test fun `a shared Reel stays blocked even when the Reels tab is allowed`() {
+        val r = rules()
+        Settings(ctx).igSharedReels = false
+        Settings(ctx).igReelsTab = false
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 10_000).action)
+        assertTrue(r.evaluate(instagram().igReelViewer("friend").snap(), 11_000).action is Action.Back)
+    }
+
+    @Test fun `leaving a blocked Story never closes an allowed DM thread`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(10_000)
+        assertTrue(r.evaluate(instagram().igStoryViewer().snap(), 10_100).action is Action.Back)
+        assertNull(r.evaluate(instagram().igTabs("feed_tab").igHomeHeader().snap(), 10_500).action)
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 11_000).action)
+    }
+
+    @Test fun `a Story tap cannot misidentify a DM as a renamed viewer`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(10_000)
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 10_100).action)
+    }
+
+    @Test fun `the Story fallback is not armed at service startup`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        assertNull(r.evaluate(instagram().node(id = "full_screen_media").snap(), 0).action)
+    }
+
+    @Test fun `visiting a DM disarms the Story fallback before opening a chat attachment`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(10_000)
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 10_100).action)
+        assertNull(r.evaluate(instagram().node(id = "full_screen_media").snap(), 10_200).action)
+    }
+
+    @Test fun `allowed Stories ignore stale Home tabs and header nodes`() {
+        val d = rules().evaluate(instagram().igTabs("feed_tab").igHomeHeader().igStoryViewer().snap(), 1000)
+        assertNull(d.action)
+        assertNull(d.cover)
+    }
+
+    @Test fun `a permitted Reels tab cannot inherit shared reel restrictions from a chat`() {
+        val r = rules()
+        Settings(ctx).igReelsTab = false
+        Settings(ctx).igSharedReels = false
+        r.evaluate(instagram().igDmThread().snap(), 10_000)
+        assertNull(r.evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 10_100).action)
+    }
+
+    @Test fun `shared reel permission changes apply without reopening the viewer`() {
+        val r = rules()
+        val shared = instagram().igReelViewer("friend").snap()
+        r.evaluate(instagram().igDmThread().snap(), 10_000)
+        assertNull(r.evaluate(shared, 10_100).action)
+        Settings(ctx).igSharedReels = false
+        assertTrue(r.evaluate(shared, 10_200).action is Action.Back)
+        Settings(ctx).igSharedReels = true
+        assertNull(r.evaluate(shared, 10_300).action)
+        Settings(ctx).igMessages = false
+        assertTrue(r.evaluate(shared, 10_400).action is Action.Back)
+    }
+
+    @Test fun `resetting Instagram context cannot grant a reel the previous chats permission`() {
+        val r = rules()
+        r.evaluate(instagram().igDmThread().snap(), 10_000)
+        r.reset()
+        assertTrue(r.evaluate(instagram().igReelViewer("external").snap(), 10_100).action is Action.Back)
+    }
+
+    @Test fun `a tall shared reel preview inside a DM is not mistaken for an opened viewer`() {
+        val d = rules().evaluate(instagram().igDmThread()
+            .node(desc = "Reel by a friend", l = 0, t = 400, r = W, b = 2400).snap(), 10_000)
+        assertNull(d.action)
+        assertNull(d.cover)
+    }
+
+    @Test fun `Reels exits to Home rather than a disabled inbox`() {
+        val r = rules()
+        Settings(ctx).igMessages = false
+        val d = r.evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 10_000)
+        assertTrue(d.action is Action.Click)
+        assertEquals("feed_tab", (d.action as Action.Click).node.id)
+    }
+
     @Test fun `reels tab redirects to DMs`() {
         val d = rules().evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 0)
         assertTrue(d.action is Action.ToDms)

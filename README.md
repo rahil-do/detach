@@ -44,7 +44,11 @@ This slows down impulsive decisions. It isn't meant to be unbreakable: see [Limi
 
 ### Pause for payments
 
-Some payment apps (Google Pay, BHIM and other UPI apps in India) refuse to open while a sideloaded Accessibility app like Detach is switched on. **Pause** (a button in the app, or a tap on the "Detach is on" notification) turns Detach off after a fingerprint or password check, and back on when the time is up. The length is yours to set, from 1 to 60 minutes (default 5). With Usage access allowed, the pause also ends the moment Instagram or YouTube is opened, so it can't be used to scroll. Turning back on by itself needs a [one-time command from a computer](docs/INSTALL.md#optional-let-detach-turn-itself-back-on-after-a-pause); without it, a notification asks you to switch Detach back on by hand.
+**Auto-pause** switches off Detach's accessibility service and removes its overlays when a selected payment app opens. Google Pay India, PhonePe, Paytm and BHIM are selected by default; choose other banking apps in Detach. Detection checks the foreground package name, never payment-screen content. A manual pause is also available in the app and through the notification's payment-pause action.
+
+No background watcher runs while paused. The configured 1–60 minutes (default 5) sets a **reminder**, not an automatic restart: explicitly resume after paying. The optional [one-time USB grant](docs/INSTALL.md#optional-let-detach-turn-itself-back-on-after-a-pause) lets the Resume button restore Detach; otherwise use Accessibility settings. An already-blocked payment app may need to be reopened after Detach switches off.
+
+**Safety tradeoff:** opening any selected payment app can trigger a pause without a password. While paused, Instagram/YouTube and disabling or uninstalling Detach are unrestricted. Auto-pause is not tamper-proof banking detection or parental control.
 
 ---
 
@@ -55,7 +59,7 @@ Some payment apps (Google Pay, BHIM and other UPI apps in India) refuse to open 
 Short version:
 1. Get `Detach-<version>.apk` and install it.
    - In India and a few other countries, Google Play Protect blocks installing apps that use Accessibility when they come from WhatsApp, a browser or a file manager. If that happens, use the [USB install](docs/INSTALL.md#option-b-install-from-a-computer-over-usb) instead.
-2. Open Detach and follow **Set up Detach**: turn on **Use Detach** in Accessibility. On Android 13 or newer you may first need **Allow restricted settings**.
+2. Open Detach and follow the setup guidance: turn on **Use Detach** in Accessibility. On Android 13 or newer you may first need **Allow restricted settings**.
 
 Requires Android 9 or newer.
 
@@ -73,7 +77,7 @@ An independent review checked battery use, hijacking and data leaks, and remote 
 
 - **Instagram and YouTube updates can break detection.** Detach recognises each screen in at least two ways (internal view IDs, plus labels or layout), so one changed detail usually doesn't break it. If an update does break it, the app's **Diagnostics** section shows it, and you get a notification. See [docs/MAINTAINING.md](docs/MAINTAINING.md) for how to fix the rules.
 - **Language:** most detection uses Instagram's and YouTube's internal view IDs, which don't change with the phone's language, and the Settings protection has a layout-based fallback. Some backups, though, match English labels: the "Edit profile" check that recognises *your own* profile, and YouTube's Shorts *tab* shortcut. On a phone set to another language those backups do nothing. It's tested in English only.
-- **While paused, Detach is off.** During a "pause for payments", nothing is blocked and the "Detach is protected" screen isn't shown, so Detach can be switched off or uninstalled in those minutes.
+- **While paused, Detach is off until you explicitly resume.** Nothing is blocked or protected. Opening a selected payment app deliberately bypasses the password/anti-distraction barrier; the reminder does not end that bypass automatically.
 - **The protection can be bypassed** by booting into safe mode, by a computer with USB debugging, or by a factory reset. It's a speed bump for willpower, not parental-control software.
 - **Phones:** tested on one phone so far. The Settings protection covers standard Android Settings (Pixel, Motorola and others) and the Google, Samsung and Xiaomi uninstall prompts.
 

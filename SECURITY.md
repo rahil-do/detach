@@ -6,28 +6,28 @@ Detach runs as an Accessibility service, a powerful permission. This document ex
 
 | We protect against | How |
 |---|---|
-| Detach leaking data | No `INTERNET` permission; no files written outside private storage; no logs except the adb-only inspector |
-| Another app abusing Detach (making it draw overlays, tap, read screens, or pause) | No exported components except the launcher activity; no intents, extras or deep links accepted; the inspector receiver requires `android.permission.DUMP` (adb/system only); the pause receiver and `PauseActivity` are not exported and are only reached by Android itself (boot, app update) and by Detach's own alarm and notifications, through immutable PendingIntents with explicit targets |
-| Detach acting on the wrong app (e.g. a UPI app) | `packageNames` filter; package check before every read and **right before** every action; covers clipped to the target app's window; covers removed within ~250 ms of the app leaving the foreground |
+| Detach leaking data | No network permission, analytics, content persistence or external-storage writes; the content-bearing inspector exists only in debug builds and requires `DUMP` |
+| Another app abusing Detach (making it draw overlays, tap, read screens, or pause) | Only the launcher activity is exported; its diagnostics action reveals local health counters but cannot authorize Resume. No external extras or deep links control protection. The release build has no inspector receiver. The pause receiver, unlock and pause activities are not exported; reminder/notification PendingIntents are immutable with explicit targets |
+| Detach acting on the wrong app (e.g. a UPI app) | Separate event-routing and content-read allowlists; package metadata checked before content reads, foreground rechecked before actions and overlay updates, foreign/password subtrees skipped, covers clipped to app and safe screen bounds. A 120 ms metadata-only watchdog runs only while an overlay is visible; Android scheduling can add latency |
 | Hostile content inside Instagram/YouTube (crafted usernames, captions, links) | Screen text is only compared against fixed strings; no parsing, no code paths driven by it; worst case is Detach blocking *less*; actions are limited to Back / Instagram's Messages tab / YouTube's Home tab |
-| Someone with the phone switching Detach off on impulse | Optional password (salted PBKDF2) on all switches; "Detach is protected" panel on Detach's own system pages; fingerprint accepted as an alternative (Android's prompt, never the phone's PIN/pattern); pausing needs the same confirmation |
+| Someone with the phone switching Detach off on impulse | Optional salted-PBKDF2 password on switches and protected system pages, with biometric confirmation. Manual payment pause uses confirmation, but selected-app auto-pause intentionally bypasses it. Nothing is protected while paused; this is not tamper-proof enforcement |
 
 **Out of scope:** someone with a computer and USB debugging (`adb` can disable or uninstall any app), safe mode, factory reset, root. Also out of scope: a malicious Instagram/YouTube app, since Detach trusts the package name Android reports.
 
-## Notes on 0.2.0 (pause for payments, fingerprint)
+## Current Payment / Privacy Behavior (0.4.0)
 
-These features were added after the audit below and have **not** been independently reviewed.
+The historical audit below describes v0.1.0, not certification of the current app. The 0.4.0 changes received implementation-agent and parent source review plus local regression checks; they have not received independent security certification or physical-device banking certification.
 
-- **The pause is a deliberate gap.** For the length of the pause (1 to 60 minutes, default 5) the Accessibility service is off: nothing is blocked and the "Detach is protected" panel can't appear, so Detach can be disabled or uninstalled in that window. Pauses can be repeated. Starting one needs fingerprint or password, **unless the phone has neither**, in which case it needs nothing (and skips the 30-second wait the panel would ask for). Set a password if that matters to you.
-- **Ending a pause needs no confirmation**, since it only turns protection back on. The worst another party could do by triggering it is end a pause early, and they can't: the receiver isn't exported.
+- **The pause is a deliberate gap.** Selected payment-app launches automatically disable accessibility and remove overlays before content inspection. This bypasses password/anti-distraction enforcement: Instagram/YouTube, Settings changes and uninstalling are unrestricted until explicit Resume. Manual pause uses fingerprint/password where available; without either, the Pause button confirms it. Do not treat this as parental control or tamper-proof banking detection.
+- **The duration is a reminder only** (1 to 60 minutes, default 5). Detach cannot detect leaving a bank while fully disabled, so there is no automatic restart. Reminders, reboot, updates, opening the app/notification and legacy resume broadcasts cannot authorize Resume. Android may retain an idle cached process; Detach does not keep a watcher or background service running.
+- **Explicit Resume** needs no password because it restores protection. It writes a single-use authorization before attempting secure enable, including when the user must finish in Android Accessibility settings. Authorization expires after three minutes, is bounded by wall and monotonic clocks, and is bound to the boot count. Pending-pause reconnects must consume it before initializing overlays/workers. Boot/update broadcasts and a new pause revoke it. This closes the normal process-death gap between recording a pause and disabling the service; durable storage failure or a compromised OS remains outside the guarantee.
 - **`WRITE_SECURE_SETTINGS` is powerful.** It allows changing any secure system setting, and Android only grants it over adb. Detach uses it in one function (`Pause.enableService`) to append its own component to `enabled_accessibility_services` and set `accessibility_enabled` to 1; other entries are written back unchanged. It never enables anything else. If you'd rather not grant it, pausing still works and you turn Detach back on by hand.
-- **Usage access is sensitive.** It reveals which apps are opened and when. It is optional, only the owner can grant it, and Detach queries it only inside `PauseWatchService`, which runs only during a pause, is not exported, and keeps nothing.
-- **Resume paths:** an alarm (exact only where Android allows it without an extra permission), an in-process timer, a boot / app-updated receiver, and a check when the app is opened. All go through one idempotent function. If none can run (e.g. Detach was force-stopped during a pause), Detach stays off until the app is opened.
+- **No Usage access or background observer.** The watcher and foreground-service permissions were removed. One explicit immutable alarm refreshes the local reminder. The local launcher-app chooser supports selected banks without broad package-query permission. Unknown/unselected banks and embedded payments inside readable social apps cannot be identified reliably by package routing.
 - **Fingerprint:** Android's `BiometricPrompt`, accepting any biometric Android rates Class 2 ("weak") or better, without device-credential fallback. No keystore key is bound to it: like the password check, it's a speed bump, not cryptographic protection. With no password set, a fingerprint alone replaces the 30-second wait, so anyone whose fingerprint is enrolled on the phone can get past the panel. A fingerprint lockout or timeout does not fall back to the 30-second wait: with no password set, the only answer is to try again later.
 - **Changing or removing the password** still needs the typed password.
-- **Battery:** nothing runs outside a pause. During a pause a small foreground service checks once a second whether the pause is over and, with Usage access, whether Instagram or YouTube was opened; it holds no wakelock and stops with the pause.
+- **Battery:** accessibility evaluations run while protection is enabled; a package-only watchdog exists only while an overlay is visible. Pauses stop worker callbacks, remove overlays and disable the service. No usage polling, wake lock or foreground watcher is used.
 
-## Audit (v0.1.0)
+## Historical Audit (v0.1.0)
 
 An independent code review on 2026-11-10 covered four areas. No critical findings.
 
@@ -74,7 +74,7 @@ Checked fine: no `INTERNET`; `allowBackup=false`; `UnlockActivity` and the servi
 ## Verifying a release yourself
 
 ```sh
-# permissions: POST_NOTIFICATIONS, USE_BIOMETRIC, RECEIVE_BOOT_COMPLETED, WRITE_SECURE_SETTINGS, PACKAGE_USAGE_STATS, FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE. Never INTERNET
+# permissions: POST_NOTIFICATIONS, USE_BIOMETRIC, RECEIVE_BOOT_COMPLETED, WRITE_SECURE_SETTINGS only
 aapt2 dump permissions Detach-<version>.apk
 # not debuggable: should print nothing
 aapt2 dump badging Detach-<version>.apk | grep debuggable

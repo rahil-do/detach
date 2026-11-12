@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_background">#3B3B98</color>
+    <color name="ic_background">#163C30</color>
+    <color name="window">#F8F9F6</color>
+    <color name="ink">#1B2924</color>
+    <color name="secondary_ink">#56645D</color>
+    <color name="rule">#D8DFD9</color>
+    <color name="surface">#EDF1EB</color>
+    <color name="accent">#226348</color>
+    <color name="on_accent">#FFFFFF</color>
+    <color name="caution">#855510</color>
+    <color name="press">#1F226348</color>
 </resources>

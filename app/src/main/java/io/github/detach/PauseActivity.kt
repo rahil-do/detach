@@ -1,12 +1,9 @@
 package io.github.detach
 
 import android.app.Activity
-import android.graphics.Typeface
 import android.os.Bundle
-import android.view.Gravity
-import android.widget.Button
+import android.widget.ScrollView
 import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 
 /**
@@ -29,42 +26,30 @@ class PauseActivity : Activity() {
             finish()
             return
         }
-        val d = resources.displayMetrics.density
-        fun dp(v: Int) = (v * d).toInt()
+        val ui = Ui(this)
         val minutes = Settings(this).pauseMinutes
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(24), dp(24), dp(16))
-            minimumWidth = dp(300)
+            setPadding(ui.dp(24), ui.dp(28), ui.dp(24), ui.dp(16))
         }
-        col.addView(TextView(this).apply {
-            text = "Pause Detach for $minutes ${if (minutes == 1) "minute" else "minutes"}?"
-            textSize = 20f
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+        col.addView(ui.icon(R.drawable.ic_pause, 28, ui.caution))
+        col.addView(ui.space(20))
+        col.addView(ui.text("Make room for a payment", 23f, strong = true).apply { isAccessibilityHeading = true })
+        col.addView(ui.space(12))
+        col.addView(ui.text("Detach’s service and overlays will switch off completely. No background watcher runs.", 15f, ui.sub))
+        col.addView(ui.space(20))
+        col.addView(ui.note("Reminder after $minutes ${if (minutes == 1) "minute" else "minutes"}. This does not restart protection.").apply {
+            background = ui.shape()
+            setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
         })
-        col.addView(TextView(this).apply {
-            text = "For payment apps that won't open while Detach is on. Blocking and the \"Detach is protected\" screen are off until it comes back."
-            textSize = 14f
-            setPadding(0, dp(8), 0, dp(12))
-        })
-        val buttons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-        }
-        buttons.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            text = "Cancel"
-            isAllCaps = false
-            setOnClickListener { finish() }
-        })
-        buttons.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            text = "Pause"
-            isAllCaps = false
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-            setOnClickListener { confirm() }
-        })
-        col.addView(buttons)
-        setContentView(col)
+        col.addView(ui.space(12))
+        col.addView(ui.text("Resume yourself when you’ve finished paying.", 15f, strong = true))
+        col.addView(ui.space(24))
+        col.addView(ui.primary("Pause protection") { confirm() })
+        col.addView(ui.space(4))
+        col.addView(ui.quiet("Keep protection on") { finish() })
+        ui.dialogPage(this, ScrollView(this).apply { addView(col) })
     }
 
     /** Ask as soon as the window is really in front; the fingerprint prompt needs that. */
@@ -83,7 +68,7 @@ class PauseActivity : Activity() {
         val ok = DetachService.pauseForPayments()
         Toast.makeText(
             this,
-            if (ok) "Detach paused until ${Pause.untilText(this)}" else "Detach isn't running",
+            if (ok) "Protection paused. Resume after paying." else "Detach isn't running",
             Toast.LENGTH_SHORT,
         ).show()
         finish()

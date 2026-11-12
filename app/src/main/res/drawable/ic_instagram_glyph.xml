@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Instagram camera glyph (outline), drawn white to sit on the brand gradient. -->
+<!-- A plain outline of a camera in a rounded square. Tinted where it is used. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
-        android:pathData="M8,2.5 H16 A5.5,5.5 0 0 1 21.5,8 V16 A5.5,5.5 0 0 1 16,21.5 H8 A5.5,5.5 0 0 1 2.5,16 V8 A5.5,5.5 0 0 1 8,2.5 Z" />
-    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2"
-        android:pathData="M12,7.6 A4.4,4.4 0 1 1 11.99,7.6 Z" />
-    <path android:fillColor="#FFFFFFFF"
-        android:pathData="M17.4,5.3 A1.3,1.3 0 1 1 17.39,5.3 Z" />
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="1.8"
+        android:pathData="M8,3 H16 A5,5 0 0 1 21,8 V16 A5,5 0 0 1 16,21 H8 A5,5 0 0 1 3,16 V8 A5,5 0 0 1 8,3 Z" />
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="1.8"
+        android:pathData="M12,7.8 A4.2,4.2 0 1 1 11.99,7.8 Z" />
+    <path android:fillColor="#FF000000" android:pathData="M17.3,5.6 A1.1,1.1 0 1 1 17.29,5.6 Z" />
 </vector>

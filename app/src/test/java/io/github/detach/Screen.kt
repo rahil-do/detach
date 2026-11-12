@@ -47,6 +47,11 @@ class Screen(private val pkg: String) {
     }
 
     fun snap() = Snap(root, W, H)
+
+    fun window(l: Int, t: Int, r: Int, b: Int): Screen {
+        root.setBoundsInScreen(Rect(l, t, r, b))
+        return this
+    }
 }
 
 // ---- Instagram building blocks, with the ids and positions seen on the real app ----

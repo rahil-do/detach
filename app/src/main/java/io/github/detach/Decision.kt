@@ -11,7 +11,11 @@ sealed class Action(val reason: String) {
     class Click(val node: Snap.N, reason: String) : Action(reason)
 
     /** Two decisions are "the same" if they would do the same thing. */
-    fun sameKind(o: Action?) = o != null && o::class == this::class
+    fun sameKind(o: Action?): Boolean {
+        if (o == null || o::class != this::class || o.reason != reason) return false
+        return this !is Click || o is Click && node.id == o.node.id && node.label() == o.node.label() &&
+            node.r == o.node.r && node.node.windowId == o.node.node.windowId
+    }
 }
 
 /** What a rule set wants: an optional area to cover, and an optional action. */

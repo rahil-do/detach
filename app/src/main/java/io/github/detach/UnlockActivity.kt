@@ -2,15 +2,14 @@ package io.github.detach
 
 import android.app.Activity
 import android.content.Context
-import android.graphics.Typeface
 import android.os.Bundle
 import android.os.CountDownTimer
-import android.view.Gravity
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 /**
@@ -36,39 +35,28 @@ class UnlockActivity : Activity() {
         biometric = Auth.biometricAvailable(this)
         // The keyboard would sit behind the fingerprint prompt; it comes up with "Use password".
         if (biometric) window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
-        val d = resources.displayMetrics.density
-        fun dp(v: Int) = (v * d).toInt()
+        val ui = Ui(this)
 
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(24), dp(24), dp(16))
-            minimumWidth = dp(300)
+            setPadding(ui.dp(24), ui.dp(28), ui.dp(24), ui.dp(16))
         }
-        col.addView(TextView(this).apply {
-            text = "Unlock Detach settings"
-            textSize = 20f
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-        })
-        msg = TextView(this).apply {
-            textSize = 14f
-            setPadding(0, dp(8), 0, dp(12))
+        col.addView(ui.icon(R.drawable.ic_lock, 28, ui.accent))
+        col.addView(ui.space(20))
+        col.addView(ui.text("A deliberate change", 23f, strong = true).apply { isAccessibilityHeading = true })
+        col.addView(ui.space(8))
+        col.addView(ui.text("Unlock Detach settings", 14f, ui.accent, true))
+        msg = ui.text("", 15f, ui.sub).apply {
+            setPadding(0, ui.dp(12), 0, ui.dp(20))
         }
         col.addView(msg)
         val buttons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, ui.dp(16), 0, 0)
         }
-        val cancel = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            text = "Cancel"
-            isAllCaps = false
-            setOnClickListener { finish() }
-        }
-        ok = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            isAllCaps = false
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-        }
-        buttons.addView(cancel)
+        ok = ui.primary("Unlock") { }
         buttons.addView(ok)
+        buttons.addView(ui.quiet("Keep settings locked") { finish() })
 
         when {
             lock.isSet -> {
@@ -107,7 +95,7 @@ class UnlockActivity : Activity() {
             else -> startWait()
         }
         col.addView(buttons)
-        setContentView(col)
+        ui.dialogPage(this, ScrollView(this).apply { addView(col) })
         setFinishOnTouchOutside(false)
     }
 

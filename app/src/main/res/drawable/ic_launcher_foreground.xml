@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The Detach mark: a letter D whose stem has come away from its bowl. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- a play triangle with a slash through it -->
-    <path android:fillColor="#FFFFFF" android:pathData="M44,38 L72,54 L44,70 Z" />
-    <path android:strokeColor="#FFFFFF" android:strokeWidth="5" android:strokeLineCap="round"
-        android:pathData="M34,76 L76,34" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M35,34 H43 V74 H35 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M51,34 A20,20 0 0 1 51,74 Z" />
 </vector>

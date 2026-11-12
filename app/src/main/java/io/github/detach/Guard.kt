@@ -1,17 +1,14 @@
 package io.github.detach
 
 import android.accessibilityservice.AccessibilityService
-import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.TextView
+import android.widget.ScrollView
 
 /**
  * Makes Detach hard to switch off on impulse.
@@ -92,11 +89,12 @@ class GuardOverlay(
 
     /** Covers [win], the Settings/installer window (the whole screen unless split-screen). */
     fun show(passwordSet: Boolean, biometric: Boolean, win: android.graphics.Rect) {
+        if (win.width() <= 0 || win.height() < 40) { hide(); return }
         view?.let { v ->
             (v.layoutParams as? WindowManager.LayoutParams)?.let { lp ->
                 if (lp.x != win.left || lp.y != win.top || lp.width != win.width() || lp.height != win.height()) {
                     lp.x = win.left; lp.y = win.top; lp.width = win.width(); lp.height = win.height()
-                    runCatching { wm.updateViewLayout(v, lp) }
+                    if (runCatching { wm.updateViewLayout(v, lp) }.isFailure) hide()
                 }
             }
             return
@@ -104,91 +102,66 @@ class GuardOverlay(
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.OPAQUE,
         ).apply {
             x = win.left; y = win.top
             width = win.width()
             height = win.height()
             gravity = Gravity.TOP or Gravity.START
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= 30) {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             title = "Detach protection"
+            windowAnimations = 0
+            alpha = 1f
+            if (Build.VERSION.SDK_INT >= 30) setFitInsetsTypes(0)
         }
         val v = build(passwordSet, biometric)
         runCatching { wm.addView(v, lp) }.onSuccess { view = v }
     }
 
     fun hide() {
-        view?.let { runCatching { wm.removeView(it) } }
+        view?.let { runCatching { wm.removeViewImmediate(it) } }
         view = null
     }
 
     private fun build(passwordSet: Boolean, biometric: Boolean): View {
-        val dark = (service.resources.configuration.uiMode and
-            android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
-        val bg = if (dark) Color.rgb(18, 18, 20) else Color.rgb(250, 250, 252)
-        val fg = if (dark) Color.WHITE else Color.rgb(20, 20, 24)
-        val sub = if (dark) Color.rgb(170, 170, 180) else Color.rgb(95, 95, 105)
-        val accent = Color.rgb(59, 59, 152)
-        val d = service.resources.displayMetrics.density
-        fun dp(v: Int) = (v * d).toInt()
-
-        return LinearLayout(service).apply {
+        val ui = Ui(service)
+        val content = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(bg)
+            setPadding(ui.dp(28), ui.dp(32), ui.dp(28), ui.dp(32))
+            addView(ui.icon(R.drawable.ic_lock, 32, ui.accent))
+            addView(ui.text("Detach is protected", 24f, strong = true).apply {
+                gravity = Gravity.CENTER
+                isAccessibilityHeading = true
+                setPadding(0, ui.dp(20), 0, ui.dp(12))
+            })
+            val confirmation = when {
+                passwordSet && biometric -> "your fingerprint or Detach password"
+                passwordSet -> "your Detach password"
+                biometric -> "your fingerprint"
+                else -> "a 30-second wait"
+            }
+            addView(ui.text("Turning Detach off, force-stopping, clearing or uninstalling it needs $confirmation.", 15f, ui.sub).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, 0, 0, ui.dp(24))
+            })
+            addView(ui.primary("Go back") { if (view != null) onGoBack() })
+            addView(ui.space(8))
+            val unlockLabel = when {
+                biometric -> "Unlock"
+                passwordSet -> "Enter password"
+                else -> "Wait 30 seconds"
+            }
+            addView(ui.quiet(unlockLabel) { if (view != null) onUnlock() })
+        }
+        return ScrollView(service).apply {
+            isFillViewport = true
             isClickable = true
-            setPadding(dp(32), 0, dp(32), 0)
-            addView(TextView(service).apply {
-                text = "🔒"
-                textSize = 48f
-                gravity = Gravity.CENTER
-            })
-            addView(TextView(service).apply {
-                text = "Detach is protected"
-                textSize = 24f
-                setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-                setTextColor(fg)
-                gravity = Gravity.CENTER
-                setPadding(0, dp(12), 0, dp(8))
-            })
-            addView(TextView(service).apply {
-                val what = "Turning Detach off, force-stopping, clearing or uninstalling it needs"
-                text = when {
-                    passwordSet && biometric -> "$what your fingerprint or your Detach password."
-                    passwordSet -> "$what your Detach password."
-                    biometric -> "$what your fingerprint.\nSet a password in Detach for stronger protection."
-                    else -> "$what a 30-second wait.\nSet a password in Detach for stronger protection."
-                }
-                textSize = 15f
-                setTextColor(sub)
-                gravity = Gravity.CENTER
-                setPadding(0, 0, 0, dp(28))
-            })
-            addView(Button(service, null, android.R.attr.borderlessButtonStyle).apply {
-                text = "Go back"
-                isAllCaps = false
-                textSize = 16f
-                setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-                setTextColor(Color.WHITE)
-                background = GradientDrawable().apply { setColor(accent); cornerRadius = 100f }
-                setPadding(dp(32), 0, dp(32), 0)
-                setOnClickListener { onGoBack() }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(48)))
-            addView(Button(service, null, android.R.attr.borderlessButtonStyle).apply {
-                text = when {
-                    biometric -> "Unlock"
-                    passwordSet -> "Enter password"
-                    else -> "Wait 30 seconds"
-                }
-                isAllCaps = false
-                textSize = 14f
-                setTextColor(sub)
-                setOnClickListener { onUnlock() }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(10)
-            })
+            setBackgroundColor(ui.bg)
+            addView(content)
         }
     }
 }

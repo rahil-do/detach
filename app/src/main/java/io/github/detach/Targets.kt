@@ -7,12 +7,14 @@ object Targets {
     /** Apps whose content is blocked. */
     val PACKAGES = setOf(INSTAGRAM, YOUTUBE)
 
-    /**
-     * Android's notification shade and Quick Settings surface. Its events are used only to
-     * remove Detach's overlays while a system panel is in front; its view hierarchy is never
-     * inspected or stored.
-     */
     val SYSTEM_UI = setOf("com.android.systemui")
+
+    val PAYMENT_DEFAULTS = setOf(
+        "com.google.android.apps.nbu.paisa.user",
+        "com.phonepe.app",
+        "net.one97.paytm",
+        "in.org.npci.upiapp",
+    )
 
     /**
      * System screens where Detach could be switched off, force-stopped, cleared or uninstalled.
@@ -26,6 +28,9 @@ object Targets {
         "com.miui.packageinstaller",
     )
 
-    /** Everything the service receives events from (must match accessibility_config.xml). */
-    val ALL = PACKAGES + GUARDED + SYSTEM_UI
+    /** Packages whose window content may be read for blocking or protecting Detach. */
+    val READABLE = PACKAGES + GUARDED
+
+    /** Default event routing only; SystemUI and payment events never grant content access. */
+    val ALL = READABLE + SYSTEM_UI + PAYMENT_DEFAULTS
 }

@@ -144,6 +144,7 @@ object Auth {
             .setNegativeButton("Cancel", null)
             .create()
         dialog.setOnShowListener {
+            Ui(activity).style(dialog)
             val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             ok.setOnClickListener {
                 val wait = lock.lockoutSeconds()

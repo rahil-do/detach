@@ -3,7 +3,9 @@ package io.github.detach
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import java.time.LocalDate
 
 /**
@@ -26,6 +28,12 @@ class Health(private val context: Context) {
     private var ytEvals = p.getInt("yt_evals", 0)
     private var ytBarHits = p.getInt("yt_bar_hits", 0)
 
+    init {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.cancel("ig".hashCode())
+        manager.cancel("yt".hashCode())
+    }
+
     fun seen(signal: String) {
         stamps[signal] = System.currentTimeMillis()
         dirty = true
@@ -35,7 +43,10 @@ class Health(private val context: Context) {
     fun igEval(tabBarFound: Boolean) {
         rollDay()
         igEvals++
-        if (tabBarFound) igTabHits++
+        if (tabBarFound) {
+            igTabHits++
+            recover("ig")
+        }
         dirty = true
         maybeFlush()
     }
@@ -44,7 +55,10 @@ class Health(private val context: Context) {
     fun ytEval(navBarFound: Boolean) {
         rollDay()
         ytEvals++
-        if (navBarFound) ytBarHits++
+        if (navBarFound) {
+            ytBarHits++
+            recover("yt")
+        }
         dirty = true
         maybeFlush()
     }
@@ -72,28 +86,81 @@ class Health(private val context: Context) {
     }
 
     private fun checkAlerts() {
-        // Plenty of use today but the navigation bar was never recognised: layout changed.
-        if (igEvals >= 300 && igTabHits == 0) alert("ig", "Instagram")
-        if (ytEvals >= 300 && ytBarHits == 0) alert("yt", "YouTube")
+        if (igEvals >= 300 && igTabHits == 0) alert("ig")
+        if (ytEvals >= 300 && ytBarHits == 0) alert("yt")
     }
 
-    private fun alert(key: String, app: String) {
+    private fun alert(key: String) {
+        if (Pause.isPending(context)) return
+        if (p.getBoolean("alert_active_$key", false)) return
+        val now = System.currentTimeMillis()
         val last = p.getLong("alerted_$key", 0)
-        if (System.currentTimeMillis() - last < 12 * 3600_000L) return
-        p.edit().putLong("alerted_$key", System.currentTimeMillis()).apply()
+        if (last > 0 && now >= last && now - last < 12 * 3600_000L) return
         val nm = context.getSystemService(NotificationManager::class.java)
+        if (!nm.areNotificationsEnabled()) return
+        p.edit().putLong("alerted_$key", now).putBoolean("alert_active_$key", true).apply()
+        refreshAlert()
+    }
+
+    private fun recover(key: String) {
+        if (!p.getBoolean("alert_active_$key", false)) return
+        p.edit().putBoolean("alert_active_$key", false).apply()
+        refreshAlert(allowPost = false)
+    }
+
+    private fun refreshAlert(allowPost: Boolean = true) {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        nm.cancel("ig".hashCode())
+        nm.cancel("yt".hashCode())
+        if (!p.getBoolean("alert_active_ig", false) && !p.getBoolean("alert_active_yt", false)) {
+            nm.cancel(NOTIFICATION_ID)
+            return
+        }
+        if (!allowPost && nm.activeNotifications.none { it.id == NOTIFICATION_ID }) return
         nm.createNotificationChannel(
-            NotificationChannel("health", "Detach health", NotificationManager.IMPORTANCE_DEFAULT)
+            NotificationChannel("health", "Protection checks", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Alerts when Detach may no longer recognise a supported screen"
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            },
         )
-        nm.notify(
-            key.hashCode(),
-            Notification.Builder(context, "health")
-                .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Detach can't recognise $app")
-                .setContentText("$app's layout seems to have changed after an update. Blocking may not work until Detach is updated.")
-                .setStyle(Notification.BigTextStyle())
-                .build()
+        val open = PendingIntent.getActivity(
+            context, NOTIFICATION_ID,
+            Intent(context, MainActivity::class.java)
+                .setAction(ACTION_DIAGNOSTICS)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val text = "Some screen layouts aren't being recognised. Open diagnostics to check protection; an app update may be needed."
+        val publicVersion = Notification.Builder(context, "health")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Detach")
+            .setContentText("Open Detach to review protection.")
+            .setContentIntent(open)
+            .setLocalOnly(true)
+            .setShowWhen(false)
+            .build()
+        val notification = Notification.Builder(context, "health")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Protection needs a check")
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(open)
+            .setPublicVersion(publicVersion)
+            .addAction(Notification.Action.Builder(null, "Open diagnostics", open).build())
+            .setLocalOnly(true)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
+            .setShowWhen(false)
+            .setCategory(Notification.CATEGORY_ERROR)
+            .build()
+        try {
+            nm.notify(NOTIFICATION_ID, notification)
+        } catch (_: SecurityException) {
+            nm.cancel(NOTIFICATION_ID)
+            p.edit().remove("alert_active_ig").remove("alert_active_yt")
+                .remove("alerted_ig").remove("alerted_yt").apply()
+        }
     }
 
     /** For the status screen. */
@@ -118,5 +185,10 @@ class Health(private val context: Context) {
 
     fun lastAction(what: String) {
         p.edit().putString("last_action", "$what (${java.time.LocalTime.now().withNano(0)})").apply()
+    }
+
+    companion object {
+        const val ACTION_DIAGNOSTICS = "io.github.detach.action.DIAGNOSTICS"
+        private const val NOTIFICATION_ID = 7003
     }
 }
