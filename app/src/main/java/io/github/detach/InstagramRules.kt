@@ -127,10 +127,11 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         // selected bottom tab remains visible. That is still the feed, not a reason to uncover it.
         if (settings.igFeed && (homeWithSelectedTab(s, tab) || homeWithoutSelectedTab(s, tab))) {
             return Decision(
-                cover = feedRect(s),
+                cover = feedRect(s, keepStories = settings.igStories),
                 coverIsHomeFeed = true,
-                coverLabel = "Feed hidden by Detach",
-                coverBackToTop = true,
+                coverLabel = if (settings.igStories) "Feed hidden by Detach" else "Stories and feed hidden by Detach",
+                // Do not offer a button that returns to Stories when Stories are intentionally hidden.
+                coverBackToTop = settings.igStories,
             )
         }
         return Decision.NONE
@@ -356,10 +357,16 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         s.visibleId("main_feed_action_bar") != null || s.visibleId("title_logo") != null ||
             s.anyVisible { it.desc.equals("Instagram Home Feed", true) }
 
-    private fun feedRect(s: Snap): Rect {
+    /**
+     * When Stories are allowed, begin below their tray so Instagram owns native Story gestures.
+     * When disabled, begin at the tray's top instead: the overlay then prevents the initial tap,
+     * which is more reliable than attempting to recognise and dismiss a loaded Story viewer.
+     */
+    private fun feedRect(s: Snap, keepStories: Boolean): Rect {
         val tray = storiesRow(s)
         if (tray != null) health.seen("ig_tray")
-        val top = tray?.r?.bottom
+        val storyBoundary = if (!keepStories) tray?.r?.top else tray?.r?.bottom
+        val top = storyBoundary
             ?: s.visibleId("main_feed_action_bar")?.r?.bottom
             ?: s.visibleId("title_logo")?.r?.bottom
             // The Home toolbar/tray has scrolled away. Cover the remaining Home content from

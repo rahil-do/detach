@@ -63,6 +63,15 @@ class InstagramRulesTest {
         assertNull(d.action)
     }
 
+    @Test fun `disabling Stories covers the Story tray before a Story can open`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        val d = r.evaluate(instagram().igTabs("feed_tab").igHomeHeader().igFeedPost().snap(), 0)
+        assertEquals(286, d.cover!!.top) // top of the tray, not its bottom
+        assertEquals("Stories and feed hidden by Detach", d.coverLabel)
+        assertFalse(d.coverBackToTop)
+    }
+
     @Test fun `story viewer is never covered`() {
         // Full-screen story: no tab bar. Even if home's header were still reported, nothing happens.
         val d = rules().evaluate(instagram().igHomeHeader().snap(), 0)
