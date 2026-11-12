@@ -8,6 +8,13 @@ object Targets {
     val PACKAGES = setOf(INSTAGRAM, YOUTUBE)
 
     /**
+     * Android's notification shade and Quick Settings surface. Its events are used only to
+     * remove Detach's overlays while a system panel is in front; its view hierarchy is never
+     * inspected or stored.
+     */
+    val SYSTEM_UI = setOf("com.android.systemui")
+
+    /**
      * System screens where Detach could be switched off, force-stopped, cleared or uninstalled.
      * Detach only looks for its own name on them, to put up the "protected" screen.
      */
@@ -19,6 +26,6 @@ object Targets {
         "com.miui.packageinstaller",
     )
 
-    /** Everything the service is allowed to see (must match res/xml/accessibility_config.xml). */
-    val ALL = PACKAGES + GUARDED
+    /** Everything the service receives events from (must match accessibility_config.xml). */
+    val ALL = PACKAGES + GUARDED + SYSTEM_UI
 }

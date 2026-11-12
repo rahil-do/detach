@@ -5,8 +5,8 @@ import android.graphics.Rect
 /**
  * Decides what to do on the current Instagram screen.
  *
- * Allowed: Stories row, DMs, reels/posts opened from a DM (only that one reel), own profile,
- * settings, account switching, creating posts/stories, notifications.
+ * The permitted parts (Stories, DMs and one reel opened from a DM) are individually configurable.
+ * Own profile, settings, account switching, creating posts/stories and notifications stay usable.
  * Blocked: home feed (covered), Reels tab, the Explore grid and reel/post grids in search
  * results (search box and accounts stay), other people's posts grid (their profile header
  * stays), swiping from a shared reel into suggested reels, reels opened outside chats.
@@ -28,10 +28,17 @@ class InstagramRules(private val settings: Settings, private val health: Health)
     private var clipsKey: String? = null
     private var clipsSince = 0L
     private var clipsScrolled = false
+    /** A Story bubble was tapped; used only as a short-lived fallback for renamed viewer ids. */
+    private var storyLaunchUntil = 0L
 
     /** Called when the reel viewer reports a scroll (i.e. the user swiped to the next reel). */
     fun onClipsScrolled(now: Long) {
         if (clipsOpen && now - clipsSince > 1200) clipsScrolled = true
+    }
+
+    /** Called only for a tap on Instagram's Stories tray / one of its Story bubbles. */
+    fun onStoryTrayTapped(now: Long) {
+        storyLaunchUntil = now + STORY_LAUNCH_WINDOW_MS
     }
 
     fun evaluate(s: Snap, now: Long): Decision {
@@ -45,6 +52,20 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         val clips = clipsViewer(s)
         if (clips != null) health.seen("ig_clips")
 
+        // A Story viewer is recognised by its dedicated ids, plus a short-lived fallback after a
+        // direct Story tap. This stays robust when Instagram renames its internal viewer ids.
+        if (!settings.igStories && (storyViewer(s) != null || armedStoryViewer(s, clips, now) != null)) {
+            endClips()
+            return Decision(action = Action.Back("Stories disabled"))
+        }
+
+        // Messages includes both the inbox tab and a conversation thread. This runs before any
+        // reel handling so a reel cannot inherit an old DM context after messages are disabled.
+        if (!settings.igMessages && (tab == Tab.MESSAGES || isDmThread(s))) {
+            endClips()
+            return Decision(action = Action.Back("Messages disabled"))
+        }
+
         // 1. Reels tab (also when reached by swiping sideways from Home)
         if (settings.igReelsTab && (tab == Tab.REELS || (clips != null && reelsTabHeader(s)))) {
             endClips()
@@ -56,7 +77,11 @@ class InstagramRules(private val settings: Settings, private val health: Health)
             if (!settings.igReelsTab) return Decision.NONE
             if (!clipsOpen) {
                 clipsOpen = true
-                clipsAllowed = lastCtx != Ctx.OTHER
+                clipsAllowed = when (lastCtx) {
+                    Ctx.DM -> settings.igSharedReels
+                    Ctx.OWN_PROFILE -> true
+                    Ctx.OTHER -> false
+                }
                 clipsKey = null
                 clipsSince = now
                 clipsScrolled = false
@@ -88,14 +113,25 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         // 5. Search: the search box and account results stay; Explore / result grids are covered
         if (settings.igExplore && inSearch(s, tab)) {
             gridRect(s, searchBoxBottom(s))?.let {
-                return Decision(cover = it, coverLabel = "Explore and reels hidden by Detach\nTap \"Accounts\" above to see only people")
+                return Decision(
+                    cover = it,
+                    coverLabel = "Explore and reels hidden by Detach\nTap \"Accounts\" above to see only people",
+                    coverBackToSearch = true,
+                )
             }
             return Decision.NONE
         }
 
-        // 6. Home: keep the Stories row, cover the feed under it
-        if (settings.igFeed && ((tab == Tab.HOME && isHomeFeed(s)) || homeWithoutSelectedTab(s, tab))) {
-            return Decision(cover = feedRect(s), coverIsHomeFeed = true, coverLabel = "Feed hidden by Detach", coverBackToTop = true)
+        // 6. Home: keep the Stories row, cover the feed under it. Once Home has scrolled,
+        // Instagram can remove every Home-specific header from the accessibility tree while its
+        // selected bottom tab remains visible. That is still the feed, not a reason to uncover it.
+        if (settings.igFeed && (homeWithSelectedTab(s, tab) || homeWithoutSelectedTab(s, tab))) {
+            return Decision(
+                cover = feedRect(s),
+                coverIsHomeFeed = true,
+                coverLabel = "Feed hidden by Detach",
+                coverBackToTop = true,
+            )
         }
         return Decision.NONE
     }
@@ -219,6 +255,32 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         return s.visible { it.desc?.startsWith("Reel by") == true && it.r.height() > s.h * 0.6 }
     }
 
+    /** Instagram calls Stories "reels" internally, but uses these separate viewer containers. */
+    private fun storyViewer(s: Snap): Snap.N? =
+        s.largestVisibleId("reel_viewer_root_view")
+            ?: s.largestVisibleId("reel_viewer_pager")
+            ?: s.largestVisibleId("reel_viewer_container")
+            ?: s.all.filter { n ->
+                n.onScreen && n.id.orEmpty().lowercase().let { id ->
+                    id.contains("story") && id.contains("viewer")
+                } && isFullScreenSurface(s, n)
+            }.maxByOrNull { s.visibleArea(it.r) }
+
+    /**
+     * A genuine Story tap followed immediately by a full-screen, non-Reel surface is a safe
+     * secondary signal. It cannot match Home, DMs, profiles or a normal Reel: they retain a tab
+     * bar, a Home header, or Instagram's dedicated clips viewer.
+     */
+    private fun armedStoryViewer(s: Snap, clips: Snap.N?, now: Long): Snap.N? {
+        if (now > storyLaunchUntil) return null
+        if (clips != null || tabBarTop(s) != null || homeHeader(s)) return null
+        return s.all.filter { it.onScreen && isFullScreenSurface(s, it) }
+            .maxByOrNull { s.visibleArea(it.r) }
+    }
+
+    private fun isFullScreenSurface(s: Snap, n: Snap.N) =
+        n.r.width() > s.w * 0.8 && n.r.height() > s.h * 0.6
+
     /** The "Reels | Friends" header only exists on the Reels tab. */
     private fun reelsTabHeader(s: Snap): Boolean {
         val top = s.h * 0.15
@@ -277,6 +339,10 @@ class InstagramRules(private val settings: Settings, private val health: Health)
             storiesRow(s) != null ||
             s.visibleId("row_feed_profile_header") != null
 
+    /** A selected, visible Home tab remains the reliable Home signal after the feed scrolls. */
+    private fun homeWithSelectedTab(s: Snap, tab: Tab): Boolean =
+        tab == Tab.HOME && tabBarTop(s) != null && (isHomeFeed(s) || s.visibleId("feed_tab") != null)
+
     /**
      * Right after Instagram starts, its tab bar can be on screen with no tab marked as selected
      * yet (the mark only appears after the first tab switch). Home is then recognised by its own
@@ -296,8 +362,16 @@ class InstagramRules(private val settings: Settings, private val health: Health)
         val top = tray?.r?.bottom
             ?: s.visibleId("main_feed_action_bar")?.r?.bottom
             ?: s.visibleId("title_logo")?.r?.bottom
-            ?: (s.h * 0.1).toInt()
+            // The Home toolbar/tray has scrolled away. Cover the remaining Home content from
+            // the top so it cannot be revealed by the small native Stories swipe.
+            ?: 0
         val bottom = tabBarTop(s) ?: s.h
         return Rect(0, top, s.w, bottom)
     }
+
+    private companion object {
+        /** A tap-to-view Story transition is immediate; a short window prevents stale matches. */
+        const val STORY_LAUNCH_WINDOW_MS = 5_000L
+    }
+
 }

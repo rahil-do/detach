@@ -15,6 +15,10 @@ class Settings(context: Context) {
     var igReelsTab by flag("ig_reels_tab")
     var igExplore by flag("ig_explore")
     var igOtherProfiles by flag("ig_other_profiles")
+    /** Parts of Instagram that remain deliberately usable by default. */
+    var igStories by flag("ig_stories")
+    var igMessages by flag("ig_messages")
+    var igSharedReels by flag("ig_shared_reels")
 
     // YouTube: Shorts is the only thing blocked
     var ytShorts by flag("yt_shorts")

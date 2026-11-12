@@ -72,6 +72,8 @@ fun Screen.igFeedPost() = node(id = "row_feed_profile_header", desc = "someone p
 fun Screen.igReelViewer(by: String) = node(id = "clips_viewer_view_pager", l = 0, t = 128, r = W, b = 2509)
     .node(id = "clips_media_component", desc = "Reel by $by. Double tap to play or pause.", l = 0, t = 128, r = W, b = 2509)
 
+fun Screen.igStoryViewer() = node(id = "reel_viewer_root_view", l = 0, t = 0, r = W, b = H)
+
 fun Screen.igDmThread() = node(id = "direct_thread_header", l = 0, t = 128, r = W, b = 286)
     .node(desc = "Audio call", l = 900, t = 150, r = 1000, b = 260, clickable = true)
 

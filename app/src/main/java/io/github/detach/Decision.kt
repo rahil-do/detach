@@ -24,6 +24,8 @@ class Decision(
     val coverLabel: String = "Hidden by Detach",
     /** Show the "Back to stories" button (home feed only). */
     val coverBackToTop: Boolean = false,
+    /** Show a button that returns Instagram's Explore surface to its Search field. */
+    val coverBackToSearch: Boolean = false,
 ) {
     companion object {
         val NONE = Decision()

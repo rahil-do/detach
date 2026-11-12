@@ -8,7 +8,7 @@ Detach uses Android's **Accessibility** API, the same one screen readers use. An
 
 | Limit | Where | Effect |
 |---|---|---|
-| `packageNames` | `app/src/main/res/xml/accessibility_config.xml` | Android only sends Detach events from **Instagram**, **YouTube**, the **Settings** app and the **uninstall prompt** (Google, AOSP, Samsung, Xiaomi). |
+| `packageNames` | `app/src/main/res/xml/accessibility_config.xml` | Android only sends Detach events from **Instagram**, **YouTube**, the **Settings** app, supported **uninstall prompts** (Google, AOSP, Samsung, Xiaomi), and Android **System UI**. System UI events are used only to hide an overlay while notification shade / Quick Settings is visible; Detach does not inspect or store System UI content. |
 | Package check before every read | `DetachService.evaluate()`, `Inspector.dump()` | Before reading a screen, Detach checks which app is in front. If it isn't one of the above, Detach reads **only that app's package name** (e.g. `com.phonepe.app`) to know it should step aside, and reads nothing else from it. |
 | No `flagRetrieveInteractiveWindows` | `accessibility_config.xml` | Detach can't list or inspect other apps' windows. |
 | Covers clipped to the app's window | `DetachService.evaluate()` | A cover can never reach outside Instagram's own window, e.g. over another app in split-screen. |

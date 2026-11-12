@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">Detach</string>
     <string name="service_label">Detach</string>
-    <string name="service_description">Hides the Instagram home feed, Reels tab and Explore, and blocks YouTube Shorts. It only looks at Instagram, YouTube and Detach\'s own Settings pages (to stop it being switched off on impulse). It never reads other apps, has no internet access, and stores only its switches and a hashed password.</string>
+    <string name="service_description">Blocks selected Instagram feeds and Reels, and YouTube Shorts. You can choose whether Stories, DMs and reels shared in DMs stay available. It only looks at Instagram, YouTube and Detach\'s own Settings pages (to stop it being switched off on impulse). It never reads other apps, has no internet access, and stores only its switches and a hashed password.</string>
 </resources>

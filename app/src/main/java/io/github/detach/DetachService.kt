@@ -57,6 +57,8 @@ class DetachService : AccessibilityService() {
     @Volatile private var lastIgEventAt = 0L
     @Volatile private var lastScreenWasHomeFeed = false
     @Volatile private var lastHomeCover: Rect? = null
+    /** A notification shade or Quick Settings panel is in front of the target app. */
+    @Volatile private var systemUiVisible = false
 
     // What the protection panel offers; worked out each time it comes up
     private var guardPassword = false
@@ -90,7 +92,11 @@ class DetachService : AccessibilityService() {
         health = Health(this)
         ig = InstagramRules(settings, health)
         yt = YouTubeRules(settings, health)
-        cover = FeedCover(this) { backToStories() }
+        cover = FeedCover(
+            this,
+            onBackToStories = { backToStories() },
+            onBackToSearch = { backToSearch() },
+        )
         lock = Lock(this)
         guard = GuardOverlay(this, onUnlock = { openUnlock() }, onGoBack = { leaveProtectedPage() })
         thread = HandlerThread("detach").also { it.start() }
@@ -133,13 +139,37 @@ class DetachService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val pkg = event.packageName?.toString() ?: return
         if (pkg !in Targets.ALL) return // defensive; the system already filters
+
+        // An accessibility overlay otherwise remains visible behind the notification shade.
+        // Do not snapshot or inspect System UI: its package event alone is enough to remove the
+        // overlay. An Instagram event after the shade closes restores the cover immediately.
+        if (pkg in Targets.SYSTEM_UI) {
+            systemUiVisible = true
+            if (::worker.isInitialized) worker.post {
+                hideCover()
+                hideGuard()
+                pending = null
+            }
+            return
+        }
+
         Inspector.trace(event)
         val now = SystemClock.uptimeMillis()
         if (pkg == Targets.INSTAGRAM) {
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                val source = event.source
+                val id = source?.viewIdResourceName.orEmpty()
+                val description = source?.contentDescription?.toString().orEmpty()
+                if (id.endsWith("reels_tray_container") || description.contains("'s story", ignoreCase = true)) {
+                    worker.post { ig.onStoryTrayTapped(now) }
+                }
+            }
             // Instagram just came to the front and was last on the home feed: put the cover up
             // straight away at its last position. The next evaluation (a few ms later) corrects
             // or removes it, so the feed never gets a chance to flash.
-            val returning = now - lastIgEventAt > 1500
+            val returningFromSystemUi = systemUiVisible
+            systemUiVisible = false
+            val returning = returningFromSystemUi || now - lastIgEventAt > 1500
             lastIgEventAt = now
             val r = lastHomeCover
             if (returning && !coverOn && lastScreenWasHomeFeed && r != null &&
@@ -182,6 +212,14 @@ class DetachService : AccessibilityService() {
     }
 
     private fun evaluate() {
+        // Keep overlays out of the notification shade even if rootInActiveWindow still reports
+        // Instagram while the shade animation is in progress.
+        if (systemUiVisible) {
+            hideCover()
+            hideGuard()
+            pending = null
+            return
+        }
         val root = rootInActiveWindow
         // Only the package name is looked at here; anything that isn't Instagram/YouTube is ignored.
         val pkg = root?.packageName?.toString()
@@ -212,7 +250,9 @@ class DetachService : AccessibilityService() {
             lastIgSnap = snap
             ig.evaluate(snap, now).also {
                 lastScreenWasHomeFeed = it.coverIsHomeFeed
-                if (it.coverIsHomeFeed) lastHomeCover = it.cover
+                if (it.coverIsHomeFeed) {
+                    lastHomeCover = it.cover
+                }
             }
         } else {
             yt.evaluate(snap)
@@ -224,7 +264,11 @@ class DetachService : AccessibilityService() {
 
         // Never let a cover reach outside the app's own window (e.g. over a UPI app in split-screen).
         val c = d.cover?.let { r -> Rect(r).takeIf { it.intersect(win) } }
-        if (c != null && d.action == null) showCover(c, d.coverLabel, d.coverBackToTop) else hideCover()
+        if (c != null && d.action == null) {
+            showCover(c, d.coverLabel, d.coverBackToTop, d.coverBackToSearch)
+        } else {
+            hideCover()
+        }
 
         val a = d.action
         if (a == null) {
@@ -297,6 +341,17 @@ class DetachService : AccessibilityService() {
         }
     }
 
+    /** Re-selecting Search returns Explore to its top-level field; Back is a safe fallback. */
+    private fun backToSearch() {
+        worker.post {
+            val snap = lastIgSnap ?: return@post
+            val search = ig.tabNodes(snap)[InstagramRules.Tab.SEARCH]
+            val clicked = search?.node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+            if (!clicked && foreground() == Targets.INSTAGRAM) performGlobalAction(GLOBAL_ACTION_BACK)
+            requestEval(400)
+        }
+    }
+
     private fun showGuard(win: Rect) {
         if (pausing) return
         val first = !guardOn
@@ -346,11 +401,16 @@ class DetachService : AccessibilityService() {
         }, 350)
     }
 
-    private fun showCover(r: Rect, label: String = HOME_LABEL, backToTop: Boolean = true) {
+    private fun showCover(
+        r: Rect,
+        label: String = HOME_LABEL,
+        backToTop: Boolean = true,
+        backToSearch: Boolean = false,
+    ) {
         if (pausing) return
         val first = !coverOn
         coverOn = true
-        main.post { if (!pausing) cover.show(r, label, backToTop) }
+        main.post { if (!pausing) cover.show(r, label, backToTop, backToSearch) }
         if (first && !guardOn) worker.postDelayed(watchdog, WATCHDOG_MS)
     }
 

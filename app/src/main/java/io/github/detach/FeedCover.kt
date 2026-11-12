@@ -16,7 +16,11 @@ import android.widget.TextView
  * It swallows touches, so the feed can't be seen or scrolled.
  * Must only be used from the main thread.
  */
-class FeedCover(private val service: AccessibilityService, private val onBackToStories: () -> Unit) {
+class FeedCover(
+    private val service: AccessibilityService,
+    private val onBackToStories: () -> Unit,
+    private val onBackToSearch: () -> Unit,
+) {
 
     private val wm = service.getSystemService(WindowManager::class.java)
     private var view: View? = null
@@ -24,12 +28,27 @@ class FeedCover(private val service: AccessibilityService, private val onBackToS
     private var shownLabel: String? = null
     private var labelView: TextView? = null
     private var backButton: Button? = null
+    private var buttonAction: (() -> Unit)? = null
+    private var shownButtonLabel: String? = null
 
     val isShowing get() = view != null
 
-    fun show(r: Rect, label: String = "Hidden by Detach", backToTop: Boolean = false) {
+    fun show(
+        r: Rect,
+        label: String = "Hidden by Detach",
+        backToTop: Boolean = false,
+        backToSearch: Boolean = false,
+    ) {
         if (r.height() < 40) { hide(); return }
-        if (r == shown && label == shownLabel) return
+        val button = when {
+            backToSearch -> "↑ Back to search" to onBackToSearch
+            backToTop -> "↑ Back to stories" to onBackToStories
+            else -> null
+        }
+        buttonAction = button?.second
+        backButton?.text = button?.first.orEmpty()
+        backButton?.visibility = if (button == null) View.GONE else View.VISIBLE
+        if (r == shown && label == shownLabel && button?.first == shownButtonLabel) return
         val lp = (view?.layoutParams as? WindowManager.LayoutParams) ?: WindowManager.LayoutParams(
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -46,16 +65,17 @@ class FeedCover(private val service: AccessibilityService, private val onBackToS
         if (v == null) {
             val nv = build()
             labelView?.text = label
-            backButton?.visibility = if (backToTop) View.VISIBLE else View.GONE
+            backButton?.text = button?.first.orEmpty()
+            backButton?.visibility = if (button == null) View.GONE else View.VISIBLE
             runCatching { wm.addView(nv, lp) }.onSuccess { view = nv }
         } else {
             // Same window, new text/size: no gap where content could flash through
             labelView?.text = label
-            backButton?.visibility = if (backToTop) View.VISIBLE else View.GONE
             runCatching { wm.updateViewLayout(v, lp) }
         }
         shown = Rect(r)
         shownLabel = label
+        shownButtonLabel = button?.first
     }
 
     fun hide() {
@@ -63,6 +83,8 @@ class FeedCover(private val service: AccessibilityService, private val onBackToS
         view = null
         shown = null
         shownLabel = null
+        shownButtonLabel = null
+        buttonAction = null
     }
 
     private fun build(): View {
@@ -84,12 +106,12 @@ class FeedCover(private val service: AccessibilityService, private val onBackToS
                 labelView = this
             })
             addView(Button(service, null, android.R.attr.borderlessButtonStyle).apply {
-                text = "↑ Back to stories"
                 setTextColor(fg)
                 isAllCaps = false
-                setOnClickListener { onBackToStories() }
+                setOnClickListener { buttonAction?.invoke() }
                 backButton = this
             })
         }
     }
+
 }

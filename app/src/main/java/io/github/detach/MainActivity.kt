@@ -361,7 +361,7 @@ class MainActivity : Activity() {
         card.addView(cardHeader(
             badge = instagramBadge(),
             title = "Instagram",
-            subtitle = { on -> if (on) "Only Stories, DMs and reels sent to you" else "Not blocking anything" },
+            subtitle = { on -> if (on) "Use Customize to choose what stays available" else "Not blocking anything" },
             value = settings.igEnabled,
         ) { on ->
             settings.igEnabled = on
@@ -373,6 +373,10 @@ class MainActivity : Activity() {
         options.addView(optionRow("Block Reels tab", "Reels sent in DMs still play, one at a time", settings.igReelsTab) { settings.igReelsTab = it })
         options.addView(optionRow("Hide Explore & reels in search", "You can still search for accounts", settings.igExplore) { settings.igExplore = it })
         options.addView(optionRow("Hide posts on others' profiles", "Their name, bio and buttons stay visible", settings.igOtherProfiles) { settings.igOtherProfiles = it })
+        options.addView(divider())
+        options.addView(optionRow("Allow Stories", "Turn this off to leave a Story immediately", settings.igStories) { settings.igStories = it })
+        options.addView(optionRow("Allow DMs", "Turn this off to leave the inbox and chat threads", settings.igMessages) { settings.igMessages = it })
+        options.addView(optionRow("Allow reels sent in DMs", "One shared Reel can play; swiping to another is still blocked", settings.igSharedReels) { settings.igSharedReels = it })
         setEnabledLook(options, settings.igEnabled)
 
         // Collapsed by default to keep the screen simple
