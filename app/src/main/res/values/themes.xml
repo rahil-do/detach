@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Detach" parent="android:Theme.DeviceDefault.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
+    <style name="Theme.Detach" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorPrimaryDark">@color/window</item>
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:textColorPrimary">@color/ink</item>
         <item name="android:textColorSecondary">@color/secondary_ink</item>
@@ -21,8 +23,10 @@
         <item name="android:statusBarColor">@color/window</item>
         <item name="android:navigationBarColor">@color/window</item>
     </style>
-    <style name="Theme.Detach.AlertDialog" parent="android:Theme.DeviceDefault.Light.Dialog.Alert">
-        <item name="android:fontFamily">sans</item>
+    <style name="Theme.Detach.AlertDialog" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorPrimaryDark">@color/window</item>
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:textColorPrimary">@color/ink</item>
         <item name="android:textColorSecondary">@color/secondary_ink</item>

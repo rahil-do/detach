@@ -22,6 +22,8 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
@@ -314,6 +316,54 @@ class ThemeCompatibilityTest {
             assertEquals(ui.bg, activity.window.statusBarColor)
             assertEquals(ui.bg, activity.window.navigationBarColor)
         }
+        controller.pause().stop().destroy()
+    }
+
+    @Test @Config(qualifiers = "notnight") fun `day dialog actions draw readable app fills instead of system chrome`() {
+        assertDialogActionsReadable()
+    }
+
+    @Test @Config(qualifiers = "night") fun `night dialog actions draw readable app fills instead of system chrome`() {
+        assertDialogActionsReadable()
+    }
+
+    @Test fun `themes pin primary colors so dynamic or OEM colors cannot leak into widgets`() {
+        for (theme in themes()) {
+            val attributes = theme.obtainStyledAttributes(intArrayOf(android.R.attr.colorPrimary))
+            try {
+                assertEquals(Ui(theme).accent, attributes.getColor(0, 0))
+            } finally {
+                attributes.recycle()
+            }
+        }
+    }
+
+    private fun assertDialogActionsReadable() {
+        val controller = Robolectric.buildActivity(ThemeCompatibilityActivity::class.java).setup()
+        val activity = controller.get()
+        val ui = Ui(activity)
+        val dialog = AlertDialog.Builder(activity)
+            .setTitle("Take a breather")
+            .setPositiveButton("Authenticate & start", null)
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Later", null)
+            .create()
+        dialog.show()
+        ui.style(dialog)
+        val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        assertEquals(ui.onAccent, positive.currentTextColor)
+        assertNull(positive.backgroundTintList)
+        assertNotNull(positive.background)
+        assertContrast(ui.onAccent, ui.accent, 4.5)
+        for (quiet in listOf(dialog.getButton(AlertDialog.BUTTON_NEGATIVE), dialog.getButton(AlertDialog.BUTTON_NEUTRAL))) {
+            assertEquals(ui.accent, quiet.currentTextColor)
+            assertNull(quiet.backgroundTintList)
+        }
+        assertContrast(ui.accent, ui.bg, 4.5)
+        positive.isEnabled = false
+        assertEquals(ui.disabledInk, positive.currentTextColor)
+        assertContrast(ui.disabledInk, ui.disabledSurface, 3.0)
+        dialog.dismiss()
         controller.pause().stop().destroy()
     }
 

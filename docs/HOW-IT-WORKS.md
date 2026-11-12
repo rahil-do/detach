@@ -43,7 +43,7 @@ A lightweight **foreground watchdog** runs only while an overlay is visible. It 
 | `Pause.kt` | Durable pause lifecycle, bounded automatic timer capability, single-use reconnect authorization and one immutable alarm |
 | `PauseForegroundMonitor.kt` | Default-off, consented Usage Access package monitor: one bounded worker, unlocked-only polling, no content/history/network |
 | `PaymentAppPicker.kt` | Searchable local app labels/icons with bounded asynchronous loading and stop-invalidated Save |
-| `Breather.kt`, `BreatherControls.kt` | Authenticated selective temporary permissions, boot/process/clock-bound expiry and native controls |
+| `Breather.kt`, `BreatherControls.kt`, `BreatherIntro.kt` | Authenticated general temporary permissions, number-wheel picker, boot/process/clock-bound expiry and native controls |
 | `StatusNotifications.kt` | Silent, local active/paused/reminder notifications with explicit actions |
 | `PauseActivity.kt` | Confirmation window opened from the "Detach is on" notification |
 | `FeedCover.kt` | The opaque cover overlay (`TYPE_ACCESSIBILITY_OVERLAY`, touch-swallowing) |

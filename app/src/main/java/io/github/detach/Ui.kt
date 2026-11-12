@@ -102,20 +102,43 @@ class Ui(private val context: Context) {
         setOnClickListener { action() }
     }
 
-    fun primary(label: String, action: () -> Unit) = button(label, action).apply {
+    fun primary(label: String, action: () -> Unit) = button(label, action).apply { asPrimary(this) }
+
+    fun secondary(label: String, action: () -> Unit) = button(label, action).apply { asSecondary(this) }
+
+    fun quiet(label: String, action: () -> Unit) = button(label, action).apply { asQuiet(this) }
+
+    /**
+     * Button looks are applied as complete fill + label pairs. Never recolor only the label of a
+     * framework button: OEM and dynamic-color themes draw their own fills (for example a pale
+     * blue pill on Android 16+ Motorola dialogs), which made accent text unreadable.
+     */
+    private fun asPrimary(button: Button) = button.apply {
+        resetChrome(this)
         setTextColor(colors(onAccent))
         background = buttonBackground(accent, disabledFill = disabledSurface, focusStroke = onAccent,
             highlight = context.getColor(R.color.primary_press))
     }
 
-    fun secondary(label: String, action: () -> Unit) = button(label, action).apply {
+    private fun asSecondary(button: Button) = button.apply {
+        resetChrome(this)
         setTextColor(colors(fg))
         background = buttonBackground(stroke = controlOutline)
     }
 
-    fun quiet(label: String, action: () -> Unit) = button(label, action).apply {
+    private fun asQuiet(button: Button) = button.apply {
+        resetChrome(this)
         setTextColor(colors(accent))
         background = buttonBackground()
+    }
+
+    private fun resetChrome(button: Button) = button.apply {
+        backgroundTintList = null
+        stateListAnimator = null
+        elevation = 0f
+        translationZ = 0f
+        typeface = medium
+        isAllCaps = false
     }
 
     private fun buttonBackground(
@@ -224,14 +247,18 @@ class Ui(private val context: Context) {
         dialog.window?.setBackgroundDrawable(panel())
         for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL)) {
             dialog.getButton(which)?.apply {
-                setTextColor(colors(accent))
-                typeface = medium
-                isAllCaps = false
+                if (which == AlertDialog.BUTTON_POSITIVE) asPrimary(this) else asQuiet(this)
                 isSingleLine = false
                 includeFontPadding = true
                 minimumHeight = dp(48)
                 setPaddingRelative(dp(16), dp(8), dp(16), dp(8))
             }
+        }
+        // Separate the filled confirm action from its neighbour and give the row breathing room
+        // from the rounded dialog edge.
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.let { positive ->
+            (positive.layoutParams as? ViewGroup.MarginLayoutParams)?.marginStart = dp(8)
+            (positive.parent as? ViewGroup)?.setPaddingRelative(dp(16), dp(8), dp(16), dp(16))
         }
         dialog.findViewById<TextView>(android.R.id.message)?.setTextColor(sub)
         val titleId = context.resources.getIdentifier("alertTitle", "id", "android")
@@ -255,8 +282,9 @@ class Ui(private val context: Context) {
                 for (index in 0 until childCount) {
                     if (getChildAt(index) !is Button) getChildAt(index).visibility = View.GONE
                 }
-                buttons.forEach { button ->
+                buttons.forEachIndexed { index, button ->
                     button.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        .apply { if (index > 0) topMargin = dp(8) }
                 }
             }
         }

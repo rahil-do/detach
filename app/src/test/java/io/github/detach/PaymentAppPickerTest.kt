@@ -293,7 +293,8 @@ class PaymentAppPickerTest {
         val row = row(list(dialog), 0)
         val label = descendants(row).filterIsInstance<TextView>().first { it.text == "Actual Bank" }
         assertEquals(activity.getColor(R.color.ink), label.currentTextColor)
-        assertEquals(activity.getColor(R.color.accent), dialog.getButton(AlertDialog.BUTTON_POSITIVE).currentTextColor)
+        assertEquals(activity.getColor(R.color.on_accent), dialog.getButton(AlertDialog.BUTTON_POSITIVE).currentTextColor)
+        assertEquals(activity.getColor(R.color.accent), dialog.getButton(AlertDialog.BUTTON_NEGATIVE).currentTextColor)
         assertNull(descendants(row).filterIsInstance<ImageView>().single().imageTintList)
         dialog.dismiss()
     }

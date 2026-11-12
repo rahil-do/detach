@@ -48,9 +48,9 @@ Some payment apps refuse to open while an accessibility service is enabled. A pa
 
 ## Take a breather
 
-Choose **Start a breather**, enter 1–60 minutes and select the features to make temporarily available. Starting or extending requires a fresh Detach password or enrolled biometric; there is no credential-free wait or phone-PIN fallback. Configure a password first if biometrics are unavailable.
+Choose **Start a breather** and scroll the wheel to 1–60 minutes; the dialog shows when it will end. A breather unblocks every Instagram and YouTube restriction. Starting or extending requires a fresh Detach password or enrolled biometric; there is no credential-free wait or phone-PIN fallback. Configure a password first if biometrics are unavailable.
 
-Feed, Reels, Explore, profile posts, Stories, DMs, shared reels and YouTube Shorts are independent. If DMs are disabled, select DMs too to reach a shared reel; the shared-reel option still allows only one item, not endless swiping. A Reels breather allows the full player. Permanent switches and protected Settings remain unchanged. **End breather now** restores usual restrictions early; expiry reevaluates the active screen without needing another social-app event. A payment pause takes priority and the breather clock does not stop during it. Reboot, app process restart, invalid state or clock inconsistency ends a breather safely.
+Extending picks a new length that replaces the time left. Permanent switches and protected Settings remain unchanged. **End breather now** restores usual restrictions early; expiry reevaluates the active screen without needing another social-app event. A payment pause takes priority and the breather clock does not stop during it. Reboot, app process restart, invalid state or clock inconsistency ends a breather safely.
 
 ## Password lock
 

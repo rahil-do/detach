@@ -50,7 +50,7 @@ The configured 1–60 minutes (default 5) sets an **automatic resume timer** whe
 
 **Optional app detection** can resume sooner when Instagram or YouTube opens. It is off by default and requires an explicit disclosure, Usage Access and the USB grant. During a payment pause only, a lightweight local foreground service checks recent app-package events about every two seconds while unlocked; it reads no screen content, keeps no usage history, uses no wake lock, and stops after resume. Android/OEM scheduling can delay or prevent detection. See [automatic payment resume](docs/automatic-payment-resume.md) for bounds and banking limitations.
 
-**Take a breather** temporarily unlocks only the features you select for 1–60 minutes after password or biometric authentication. Permanent controls and Settings protection stay unchanged. End it early or let it expire; reboot, process restart or invalid timing state ends it safely. The app chooser shows local app names and logos, and controls have distinct light/dark enabled, disabled and on/off states.
+**Take a breather** unblocks Instagram and YouTube for 1–60 minutes, picked on a native number wheel, after password or biometric authentication. A short animation confirms the start. Permanent controls and Settings protection stay unchanged. End it early or let it expire; reboot, process restart or invalid timing state ends it safely. The app chooser shows local app names and logos, and controls have distinct light/dark enabled, disabled and on/off states.
 
 **Safety tradeoff:** opening any selected payment app can trigger a pause without a password. While paused, Instagram/YouTube and disabling or uninstalling Detach are unrestricted. Auto-pause is not tamper-proof banking detection or parental control.
 

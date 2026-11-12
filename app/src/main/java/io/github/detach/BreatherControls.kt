@@ -3,20 +3,31 @@ package io.github.detach
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.hardware.biometrics.BiometricManager
 import android.os.Build
-import android.text.InputType
+import android.text.format.DateFormat
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.CheckBox
-import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.NumberPicker
 import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
+import java.util.Date
 import android.provider.Settings as SystemSettings
 
+/**
+ * A breather is deliberately general: it unblocks every Detach restriction for a short,
+ * authenticated window, then protection returns on its own. Length is chosen on the native
+ * Android number wheel.
+ */
 object BreatherControls {
+    const val MIN_MINUTES = 1
+    const val MAX_MINUTES = 60
+    const val DEFAULT_MINUTES = 10
+
     fun build(activity: Activity, onChanged: () -> Unit): View {
         val ui = Ui(activity)
         val column = LinearLayout(activity).apply {
@@ -29,12 +40,12 @@ object BreatherControls {
             column.addView(ui.section("BREATHER"))
             column.addView(ui.note(if (remaining > 0) {
                 val minutes = (remaining + 59_999L) / 60_000L
-                "Breather active · up to $minutes min left. Only selected features are temporarily unblocked."
+                "Breather on · $minutes min left. Instagram and YouTube are unblocked until it ends, then protection returns on its own."
             } else {
-                "Temporarily unblock only what you choose for 1–60 minutes. Your usual settings and tamper protection stay unchanged."
+                "Need a few minutes? A breather unblocks Instagram and YouTube for up to an hour, then protection returns on its own. It always asks for your fingerprint or password."
             }).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE })
             column.addView(ui.space(12))
-            column.addView(ui.secondary(if (remaining > 0) "Change or extend breather" else "Start a breather") {
+            column.addView(ui.secondary(if (remaining > 0) "Extend breather" else "Start a breather") {
                 if (!Auth.available(activity)) {
                     authenticationRequired(activity)
                 } else {
@@ -86,51 +97,63 @@ object BreatherControls {
         dialog.show()
     }
 
+    /** The native wheel used to pick a breather length; exposed for tests. */
+    internal fun minutePicker(activity: Activity, ui: Ui, initial: Int) = NumberPicker(activity).apply {
+        tag = "breather-minutes"
+        minValue = MIN_MINUTES
+        maxValue = MAX_MINUTES
+        value = initial.coerceIn(MIN_MINUTES, MAX_MINUTES)
+        wrapSelectorWheel = false
+        // Wheel-only: avoids an unexpected keyboard and keeps values always in range.
+        descendantFocusability = NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        contentDescription = "Breather length in minutes"
+        if (Build.VERSION.SDK_INT >= 29) {
+            textColor = ui.fg
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 26f, resources.displayMetrics)
+            selectionDividerHeight = ui.dp(2)
+        }
+    }
+
+    private fun endsAt(activity: Activity, minutes: Int): String =
+        "Ends at ${DateFormat.getTimeFormat(activity).format(Date(System.currentTimeMillis() + minutes * 60_000L))}"
+
     private fun choose(activity: Activity, onChanged: () -> Unit) {
         val ui = Ui(activity)
-        val selected = Breather.activeFeatures(activity)
+        val remaining = Breather.remainingMs(activity)
+        val initial = if (remaining > 0) ((remaining + 59_999L) / 60_000L).toInt() else DEFAULT_MINUTES
         val content = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(ui.dp(22), ui.dp(8), ui.dp(22), ui.dp(8))
+            setPadding(ui.dp(24), ui.dp(4), ui.dp(24), ui.dp(8))
         }
-        content.addView(ui.note("Choose features to unblock temporarily. Everything else stays restricted. Starting or extending always requires authentication."))
-        content.addView(ui.space(12))
-        val durationLabel = ui.text("Duration in minutes (1–60)")
-        val duration = ui.style(EditText(activity)).apply {
-            id = View.generateViewId()
-            inputType = InputType.TYPE_CLASS_NUMBER
-            isSingleLine = true
-            setText("5")
-            contentDescription = "Breather duration in minutes, 1 to 60"
-            tag = "breather-duration"
+        content.addView(ui.note(if (remaining > 0) {
+            "Pick a new length. It replaces the time left; it doesn’t add to it."
+        } else {
+            "Instagram and YouTube will be fully unblocked, then protection returns on its own."
+        }))
+        val picker = minutePicker(activity, ui, initial)
+        val unit = ui.text("min", 18f, ui.sub, strong = true).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
-        durationLabel.labelFor = duration.id
-        content.addView(durationLabel)
-        content.addView(duration)
-        val choices = Breather.Feature.entries.associateWith { feature ->
-            CheckBox(activity).apply {
-                text = feature.label
-                textSize = 15f
-                typeface = ui.regular
-                setTextColor(ui.fg)
-                buttonTintList = ColorStateList(
-                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                    intArrayOf(ui.accent, ui.sub),
-                )
-                minimumHeight = ui.dp(48)
-                minimumWidth = ui.dp(48)
-                isChecked = feature in selected
-                tag = feature
-                content.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            }
+        val wheel = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, ui.dp(12), 0, ui.dp(4))
+            addView(picker, LinearLayout.LayoutParams(ui.dp(96), ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(unit, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = ui.dp(4)
+            })
         }
-        val error = ui.note("").apply {
-            setTextColor(ui.caution)
+        content.addView(wheel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val summary = ui.text(endsAt(activity, picker.value), 14f, ui.sub).apply {
+            gravity = Gravity.CENTER
+            tag = "breather-ends"
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
-        content.addView(error)
+        content.addView(summary, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        picker.setOnValueChangedListener { _, _, value -> summary.text = endsAt(activity, value) }
+
         val dialog = AlertDialog.Builder(activity)
-            .setTitle("Choose your breather")
+            .setTitle(if (remaining > 0) "Extend your breather" else "Take a breather")
             .setView(ScrollView(activity).apply { addView(content) })
             .setPositiveButton("Authenticate & start", null)
             .setNegativeButton("Cancel", null)
@@ -138,24 +161,18 @@ object BreatherControls {
         dialog.setOnShowListener {
             ui.style(dialog)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val minutes = duration.text.toString().toIntOrNull()
-                val features = choices.filterValues { it.isChecked }.keys.toSet()
-                when {
-                    minutes == null || minutes !in 1..60 -> {
-                        duration.error = "Choose 1 to 60 minutes"
-                        duration.requestFocus()
-                    }
-                    features.isEmpty() -> error.text = "Choose at least one feature to unblock."
-                    !Auth.available(activity) -> {
-                        dialog.dismiss()
-                        authenticationRequired(activity)
-                    }
-                    else -> {
-                        dialog.dismiss()
-                        Breather.confirmAndBegin(activity, minutes, features) { started ->
-                            if (started) onChanged()
-                            else Toast.makeText(activity, "Breather not started. No new access was granted.", Toast.LENGTH_LONG).show()
-                        }
+                val minutes = picker.value.coerceIn(MIN_MINUTES, MAX_MINUTES)
+                dialog.dismiss()
+                if (!Auth.available(activity)) {
+                    authenticationRequired(activity)
+                    return@setOnClickListener
+                }
+                Breather.confirmAndBegin(activity, minutes, Breather.Feature.entries.toSet()) { started ->
+                    if (started) {
+                        onChanged()
+                        BreatherIntro.play(activity, minutes)
+                    } else {
+                        Toast.makeText(activity, "Breather not started. No new access was granted.", Toast.LENGTH_LONG).show()
                     }
                 }
             }

@@ -96,7 +96,7 @@ Then update the fingerprint in `SECURITY.md`.
 - [ ] Pending-pause reconnect fails closed without authority; selected-payment foreground rejects explicit Resume except the documented bounded original-bank timer suppression
 - [ ] Reminder duration: − and + change it, and ask for fingerprint or password when a password is set
 - [ ] Auto-pause disclosure explains the password bypass and timer-only banking limitation; app monitoring defaults off, requires disclosure+both grants and stops on revoke/opt-out/resume/off-screen polling
-- [ ] Breather always authenticates start/extension, restores only selected restrictions on expiry/early end, survives no process/boot restart, and never relaxes Guard or payment priority
+- [ ] Breather always authenticates start/extension, restores all restrictions on expiry/early end, survives no process/boot restart, and never relaxes Guard or payment priority
 - [ ] Protected picker/consent dialogs close on host stop; stale Save/Enable and queued authentication cannot reuse the prior visit
 - [ ] Light/dark UI, large text, rotation, preserved disclosures/scroll, animations disabled, repeated expansion, and diagnostics notification navigation remain usable
 - [ ] Status notifications stay silent/private, compatibility alerts deduplicate/recover, and release DUMP/TRACE broadcasts produce no inspector output

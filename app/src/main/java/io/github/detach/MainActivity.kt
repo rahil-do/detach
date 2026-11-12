@@ -175,6 +175,7 @@ class MainActivity : Activity() {
                 Pause.refreshNotification(this@MainActivity)
                 render()
             })
+            addView(ui.space(20))
             addView(ui.hairline())
         })
         root.addView(payments(paused).apply { tag = "payments" })
@@ -221,7 +222,7 @@ class MainActivity : Activity() {
             paused && Pause.isExpired(this) -> "The pause timer is due. If automatic resume is unavailable or delayed, use Resume protection."
             paused && Pause.canSelfEnable(this) -> "Automatic resume after ${Pause.untilText(this)}. You can resume sooner below."
             paused -> "Reminder at ${Pause.untilText(this)}. Automatic resume needs the optional USB setup below."
-            active && Breather.remainingMs(this) > 0 -> "Your breather is active. Only selected features are temporarily available."
+            active && Breather.remainingMs(this) > 0 -> "Your breather is on. Instagram and YouTube are unblocked until it ends."
             active -> "Your app choices below are being applied."
             connecting -> "Accessibility is enabled, but the service hasn’t connected yet. Protection is not confirmed."
             else -> "One Android permission to get started."
