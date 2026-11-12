@@ -1,6 +1,6 @@
 # Privacy
 
-**Short version:** Detach can't use the internet, only looks at Instagram, YouTube and its own Settings pages, and stores almost nothing.
+**Short version:** Detach has no network permission or remote endpoints. Screen-content detection is limited to Instagram, YouTube and Settings/uninstall protection. Payment auto-pause uses package names only and stops the service; nothing monitors banking screens during a pause.
 
 ## What Detach can access
 
@@ -8,8 +8,8 @@ Detach uses Android's **Accessibility** API, the same one screen readers use. An
 
 | Limit | Where | Effect |
 |---|---|---|
-| `packageNames` | `app/src/main/res/xml/accessibility_config.xml` | Android only sends Detach events from **Instagram**, **YouTube**, the **Settings** app and the **uninstall prompt** (Google, AOSP, Samsung, Xiaomi). |
-| Package check before every read | `DetachService.evaluate()`, `Inspector.dump()` | Before reading a screen, Detach checks which app is in front. If it isn't one of the above, Detach reads **only that app's package name** (e.g. `com.phonepe.app`) to know it should step aside, and reads nothing else from it. |
+| Event package filter | `accessibility_config.xml`, `Settings.eventPackages()` | Events are limited to the social apps, Settings/uninstall packages, System UI, and selected payment packages. Changing the payment selection updates the filter. No wildcard or unrestricted event subscription is used. |
+| Separate content allowlist | `Targets.READABLE`, `DetachService.evaluate()`, `Inspector` | Payment/System UI events are routed using package metadata before accessing their source or screen contents. Receiving an event never grants a package membership in the content allowlist. |
 | No `flagRetrieveInteractiveWindows` | `accessibility_config.xml` | Detach can't list or inspect other apps' windows. |
 | Covers clipped to the app's window | `DetachService.evaluate()` | A cover can never reach outside Instagram's own window, e.g. over another app in split-screen. |
 
@@ -24,7 +24,7 @@ On Instagram/YouTube/Settings screens it looks at element IDs, labels and positi
 - tap Instagram's **Messages** tab, or YouTube's **Home** tab,
 - show the "protected" panel.
 
-That's everything it can do. It doesn't type, scroll, like, follow, send or read your messages.
+It does not type, scroll, like, follow or send messages. Accessibility labels can include message previews or other social-app text while a supported screen is inspected; that transient text is used for local rules, not stored or uploaded. Password subtrees and foreign-package children are excluded.
 
 ## What Detach stores
 
@@ -32,12 +32,12 @@ All of this is in the app's private storage on the phone (`/data/data/io.github.
 
 | File | Contents |
 |---|---|
-| `settings.xml` | The on/off switches |
+| `settings.xml` | The on/off switches, reminder duration and selected payment package names. The chooser reads launcher-app labels locally; it does not upload an installed-app list. |
 | `lock.xml` | A random salt and a **PBKDF2-HMAC-SHA256** hash of your password (120,000 iterations). Never the password itself. |
-| `pause.xml` | While a "pause for payments" is running: the time it ends. Otherwise empty. |
+| `pause.xml` | Pause start/reminder timestamps and a short-lived explicit-Resume authorization (wall clock, elapsed time and boot count). Cleared on completed resume/authorized service start. Expiration is a reminder, not a restart. |
 | `health.xml` | Timestamps of when each part of Instagram/YouTube was last recognised, daily counters, and the last action (e.g. "Instagram Reels tab (15:00:38)") |
 
-Detach stores **no** screen content, messages, usernames, history or screenshots. Android cloud backup is disabled (`allowBackup="false"`).
+Detach stores **no** screen content, messages, usernames, history or screenshots. Android cloud backup is disabled (`allowBackup="false"`, `fullBackupContent="false"`), and explicit extraction rules exclude every storage domain from cloud backup and Android device-to-device transfer.
 
 ## What Detach sends
 
@@ -50,9 +50,6 @@ aapt2 dump permissions Detach-<version>.apk
 # uses-permission: name='android.permission.USE_BIOMETRIC'
 # uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
 # uses-permission: name='android.permission.WRITE_SECURE_SETTINGS'
-# uses-permission: name='android.permission.PACKAGE_USAGE_STATS'
-# uses-permission: name='android.permission.FOREGROUND_SERVICE'
-# uses-permission: name='android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
 ```
 
 ## Permissions
@@ -61,16 +58,20 @@ aapt2 dump permissions Detach-<version>.apk
 |---|---|
 | `POST_NOTIFICATIONS` | Local notifications only: "Detach can't recognise Instagram/YouTube", and the silent "Detach is on / paused until…" status notification. |
 | `USE_BIOMETRIC` | Showing Android's own fingerprint prompt as an alternative to the Detach password. Detach only learns "confirmed" or "not confirmed". It never sees or stores fingerprint data, and uses no keys or crypto tied to it. |
-| `RECEIVE_BOOT_COMPLETED` | If the phone restarts during a "pause for payments", Detach is woken once after boot to end that pause. It does nothing else at boot, and nothing at all if no pause was running. |
-| `WRITE_SECURE_SETTINGS` | **Not granted by installing.** Only you can grant it, from a computer ([INSTALL.md](INSTALL.md#optional-let-detach-turn-itself-back-on-after-a-pause)). Used for one thing: after a pause, Detach adds **its own entry** back to Android's list of enabled Accessibility services (`enabled_accessibility_services`, and the `accessibility_enabled` flag that goes with it). Other apps' entries in that list are kept exactly as they were. Detach reads and writes no other system setting. |
-| `PACKAGE_USAGE_STATS` (Usage access) | **Not granted by installing.** Only you can grant it (Settings → Special app access → Usage access, or `adb shell appops set io.github.detach GET_USAGE_STATS allow`). It lets an app see which apps were opened and when, never their content. Detach reads it only during a pause, once a second, to check whether Instagram or YouTube came to the front, and stores nothing from it. |
-| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | The small watcher that does that check. It runs only during a pause (1 to 60 minutes, as set) and shows the "paused until…" notification. |
+| `RECEIVE_BOOT_COMPLETED` | Restores the reminder after reboot if a pause is pending; never automatically restarts the accessibility service. |
+| `WRITE_SECURE_SETTINGS` | **Optional USB grant, not granted by installing.** Only an explicit Resume action adds Detach's own entry back to the enabled-accessibility list and sets the associated accessibility flag. Existing services are preserved. No payment alarm, boot/update broadcast or notification tap silently reenables it. |
+
+No Usage access, foreground-service, broad package-query or network permission is requested. Pauses use one explicit immutable reminder PendingIntent. The receiver is not exported, ignores legacy resume actions, and old resume PendingIntents are revoked. Android can retain an idle cached process; Detach does not keep a worker, watcher or background service alive while paused.
+
+Automatic pausing intentionally bypasses password/anti-distraction enforcement when a selected payment app opens. Nothing is blocked or protected during that pause, including Instagram/YouTube and disabling/uninstalling Detach. This is a payment-safety tradeoff, not tamper-proof banking detection; protection stays off until explicitly resumed.
+
+An explicit Resume records a durable, single-use authorization valid for three minutes, including when Android Settings must complete the enable step. Its age is bounded by monotonic elapsed time and bound to Android's boot count, not just the adjustable wall clock; boot/update broadcasts revoke it. A pending-pause service reconnect must consume that authorization before initializing; missing, expired, future-dated or already-consumed authorization is rejected. This prevents a reconnect from silently clearing a pause after process death between recording it and disabling the service. A new pause revokes the authorization, and a completed resume clears it with both pause timestamps. The boot count is system lifecycle metadata, not app-usage or payment-screen data.
 
 The Accessibility service itself is not a permission Detach holds: you switch it on in Settings, and its limits are described above.
 
 ## Developer inspector
 
-For updating the detection rules, Detach can print the current Instagram/YouTube/Settings screen layout (with text cut to 40 characters) to the phone's **local** system log. Only a computer connected over USB with debugging enabled can trigger this, because the trigger requires `android.permission.DUMP`, which normal apps can't hold. It's off unless triggered and never writes files.
+In debug builds only, the developer inspector can print social-app detection information to the local system log. Its gate rejects payment, System UI, Settings and unknown packages before traversal, validates package membership per node, and redacts password values. Its broadcast trigger requires `android.permission.DUMP`. Release builds do not register the inspector receiver or emit inspector output. Debug logs can still include non-password social-app labels; do not enable diagnostic tracing when handling private social content.
 
 ## Third parties
 

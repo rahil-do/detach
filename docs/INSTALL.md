@@ -54,7 +54,7 @@ This uses Android's developer tool `adb`. Installs through `adb` aren't blocked 
 
    Or by hand: `adb install -r Detach-<version>.apk`
 
-3. **Optional, recommended:** let Detach turn itself back on after a "pause for payments". The scripts try this for you; if you installed by hand, run it right after `adb install`:
+3. **Optional:** let your explicit **Resume** tap restore protection without a separate Settings step. Installation scripts do not grant this powerful permission. Only run this if you want one-tap Resume:
 
    ```sh
    adb shell pm grant io.github.detach android.permission.WRITE_SECURE_SETTINGS
@@ -67,19 +67,19 @@ This uses Android's developer tool `adb`. Installs through `adb` aren't blocked 
 
 ## Set up (both options)
 
-Open **Detach**. Until it's switched on, it shows a **Set up Detach** card:
+Open **Detach**. Until it's switched on, it shows setup guidance:
 
 1. **Turn on Detach.** Tap **Open Accessibility** → find **Detach** (sometimes under *Downloaded apps* or *Installed apps*) → switch on **Use Detach** → **Allow**.
    Android shows a strong warning that the app can "view and control the screen". That's standard for every Accessibility app. Detach only looks at Instagram, YouTube and its own Settings pages; see [PRIVACY.md](PRIVACY.md).
 2. **If Android says "Restricted setting"** (Android 13+, Option A only): tap **Open App info** in Detach → tap **⋮** (top right) → **Allow restricted settings** → confirm. Then do step 1 again.
    On some phones this menu item only appears *after* you've seen the "Restricted setting" message once.
-3. **Allow notifications (optional).** Detach only uses notifications to tell you if an Instagram or YouTube update stops it from working.
+3. **Allow notifications (optional).** Used for silent protection status, payment reminders and compatibility diagnostics.
 
-When the badge at the top says **● Active**, you're done. Open Instagram: the stories row is there and the feed under it is covered.
+When the top section says **Protection is on**, you're done. Open Instagram: the stories row is there and the feed under it is covered.
 
 ### Optional: let Detach turn itself back on after a pause
 
-[Pause for payments](USING.md#pause-for-payments) turns Detach off for a few minutes (1 to 60, default 5). Android lets an app switch its own Accessibility service *off*, but not back *on*: that needs the `WRITE_SECURE_SETTINGS` permission, which can only be granted from a computer. Do it once (with USB debugging on, see [Option B](#option-b-install-from-a-computer-over-usb)); it survives updates and reboots, and is lost only if Detach is uninstalled:
+[Pause for payments](USING.md#pause-for-payments) switches Detach off until you explicitly resume. The 1–60 minute setting (default 5) is only a reminder. The optional `WRITE_SECURE_SETTINGS` grant lets your **Resume** tap restore Detach without a separate Accessibility-settings step. It never enables automatic restart over a payment screen. Grant it once with USB debugging on (see [Option B](#option-b-install-from-a-computer-over-usb)); it survives updates and reboots, and is lost if Detach is uninstalled:
 
 ```sh
 adb shell pm grant io.github.detach android.permission.WRITE_SECURE_SETTINGS
@@ -87,18 +87,15 @@ adb shell pm grant io.github.detach android.permission.WRITE_SECURE_SETTINGS
 
 On some phones (Xiaomi, Oppo, Realme…) this fails with a security error until you also turn on **USB debugging (Security settings)** / **Disable permission monitoring** in Developer options.
 
-Without it, pausing still works; when the pause is over, a notification asks you to switch **Use Detach** back on yourself. To take the permission away again: `adb shell pm revoke io.github.detach android.permission.WRITE_SECURE_SETTINGS`.
+Without it, pausing still works. After paying, tap **Resume** in Detach, then switch **Use Detach** back on in the Settings page that opens within three minutes. If that authorization expires, return to Detach and tap Resume again; a pending pause otherwise refuses service reconnects. To revoke the grant: `adb shell pm revoke io.github.detach android.permission.WRITE_SECURE_SETTINGS`.
 
 Detach uses this permission for one thing: adding its own entry back to Android's list of enabled Accessibility services. See [PRIVACY.md](PRIVACY.md#permissions).
 
-### Optional: end a pause when Instagram or YouTube is opened
+### Payment auto-pause and older installations
 
-While paused, Detach's Accessibility service is off, so it can't see which app is open. If you allow **Usage access**, it can still notice Instagram or YouTube coming to the front and end the pause within a second or two. Usage access shows which apps are opened and when, never what is on screen, and Detach reads it only during a pause.
+Choose your payment and banking apps in Detach. Google Pay India, PhonePe, Paytm and BHIM are selected initially. Auto-pause checks only foreground package metadata, then disables the accessibility service without a password prompt. This deliberately makes payment compatibility more important than anti-distraction enforcement: selected apps can be used to bypass blocking, and protection remains off until explicit resume.
 
-- On the phone: open Detach and tap the hint on the Pause card, or go to Settings → Apps → Special app access → Usage access → Detach → allow.
-- Or from a computer: `adb shell appops set io.github.detach GET_USAGE_STATS allow`
-
-This only has an effect together with the permission above. Without Usage access the pause runs its full time.
+The older Usage-access watcher has been removed. There is no foreground service or usage-history polling during a pause; opening Instagram or YouTube does not end it. If an older install was granted Usage access, you can revoke it in Android Settings; this version does not request or use it.
 
 ### Recommended next steps
 - **Set a password** in Detach (Password lock → Set password). Without one, the "Detach is protected" screen only asks for your fingerprint, or for a 30-second wait if the phone has none.
@@ -130,4 +127,4 @@ Forgot the password? From a computer: `adb uninstall io.github.detach`.
 | Detach's badge says **Off** after a while | Your phone stopped it. Turn it back on in Accessibility, and set battery to **Unrestricted** (see above). Using **Force stop** on Detach also turns its Accessibility off. |
 | The feed or Reels show again after an Instagram update | Open Detach → **Diagnostics**. If items say "not yet" or show old times, the layout changed. Report it (see [SECURITY.md](../SECURITY.md#reporting)) or update the rules ([MAINTAINING.md](MAINTAINING.md)). |
 | A UPI app refuses to open | Some refuse while any sideloaded Accessibility app is on: use [Pause for payments](USING.md#pause-for-payments). Others refuse while **Developer options / USB debugging** is on: turn Developer options off. |
-| Detach stays off after a pause | The one-time permission isn't granted (the app says so under *Pause for payments*). Tap the "Detach is still off" notification and switch it on, or [grant the permission](#optional-let-detach-turn-itself-back-on-after-a-pause). |
+| Detach stays off after a pause | This is intentional: the timer is a reminder, not a restart. Open Detach and tap **Resume** after paying. Without the optional USB grant, complete the Accessibility-settings step. |

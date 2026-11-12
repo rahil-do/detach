@@ -1,14 +1,16 @@
 # How Detach works
 
-Detach is about 2,000 lines of Kotlin with no dependencies beyond the Android SDK. It doesn't modify Instagram or YouTube. It watches their screens through the Accessibility API and reacts in one of four ways: **cover** part of the screen, press **Back**, tap a **tab**, or show the **protection panel**.
+Detach is a native Kotlin app with no runtime dependencies beyond the Android SDK. It doesn't modify Instagram or YouTube. It watches their screens through the Accessibility API and reacts in one of four ways: **cover** part of the screen, press **Back**, tap a **tab**, or show the **protection panel**.
 
 ## The loop
 
 ```
  Android ──event──▶ DetachService.onAccessibilityEvent
-                        │  (only from Instagram / YouTube / Settings / installer)
+                        │  (social / Settings / installer / System UI / selected payments)
                         ▼
-                  requestEval()  ── throttle: new screen → now · scroll → 80 ms · other → 160 ms
+                  package routing → payment: pause · System UI: hide, no content reads
+                        ▼
+                  requestEval()  ── coalesced, frame-scale scheduling for target surfaces
                         ▼
                   evaluate()   [worker thread]
                         │ rootInActiveWindow → package check (anything else: hide all, stop)
@@ -20,12 +22,12 @@ Detach is about 2,000 lines of Kotlin with no dependencies beyond the Android SD
       └──── Decision(cover?, action?) ───────┘
                         ▼
    cover  → FeedCover overlay (clipped to the app's window)
-   action → must be decided twice, ≥250 ms apart → foreground re-checked → performed
+   action → cover immediately, confirm twice → foreground re-checked → performed
             (Back · click Messages tab · click Home tab) → loop guard (max 8 per 6 s)
    guard  → GuardOverlay full-window panel → UnlockActivity
 ```
 
-A **watchdog** (every 250 ms) runs only while a cover or panel is visible, so they disappear as soon as the app leaves the screen. This is needed because Android doesn't send Detach events from other apps.
+A lightweight **foreground watchdog** runs only while an overlay is visible. It checks package metadata rather than repeatedly snapshotting an unchanged screen. Covers update in place without window animations; versioned UI work is rejected after a package/state change, and bounded loading-state covers avoid exposing content between incomplete trees. Geometry is clipped to the app window and safe screen bounds. Accessibility events cannot guarantee zero visible frames on every device; app updates and real-device transitions still need regression testing.
 
 ## Source tour (`app/src/main/java/io/github/detach/`)
 
@@ -38,10 +40,12 @@ A **watchdog** (every 250 ms) runs only while a cover or panel is visible, so th
 | `Guard.kt` | Recognises Detach's own system pages; the "Detach is protected" overlay |
 | `UnlockActivity.kt` | Fingerprint / password / 30-second wait window opened from the protection panel |
 | `Auth.kt` | "Fingerprint or password": Android's `BiometricPrompt` with the Detach password as the only fallback; the shared password dialog |
-| `Pause.kt` | Pause for payments: the stored end time, the resume alarm and receiver, re-enabling the service (`WRITE_SECURE_SETTINGS`), the status notification |
-| `PauseWatch.kt` | `PauseWatchService`: a foreground service that lives only during a pause, polls `UsageStatsManager` once a second and ends the pause when Instagram or YouTube comes to the front |
+| `Pause.kt` | Durable pause/reminder lifecycle, explicit-resume authorization, one reminder alarm, optional secure-setting reenable after an explicit user action |
+| `StatusNotifications.kt` | Silent, local active/paused/reminder notifications with explicit actions |
 | `PauseActivity.kt` | Confirmation window opened from the "Detach is on" notification |
 | `FeedCover.kt` | The opaque cover overlay (`TYPE_ACCESSIBILITY_OVERLAY`, touch-swallowing) |
+| `CoverState.kt` | Per-package, clipped cover frames and bounded loading-state handoff |
+| `Ui.kt` | Shared native visual language and motion helpers |
 | `Decision.kt` | `Decision` and `Action` types |
 | `Settings.kt` | The switches (SharedPreferences) |
 | `Lock.kt` | Password: salted PBKDF2-HMAC-SHA256, constant-time compare, 5-try lockout |
@@ -54,21 +58,25 @@ A **watchdog** (every 250 ms) runs only while a cover or panel is visible, so th
 ## Pause for payments
 
 ```
- MainActivity button / "Detach is on" notification → PauseActivity
-        │  Auth.confirm (fingerprint or password; nothing if neither exists)
+ Selected payment app → validate foreground package name only
+ OR manual pause → Auth.confirm
         ▼
- DetachService.pauseForPayments()      same process, via the service's static reference
-        │  Pause.begin: store end time · set alarm + in-process timer · "paused until…" notification
-        │  start PauseWatchService (checks once a second: time up? Instagram/YouTube opened?)
-        │  remove overlays · disableSelf()
+ Remove overlays · cancel worker callbacks · persist pause · disableSelf()
+        │  one immutable reminder alarm, no background watcher or usage polling
         ▼
- When the set time is up (1–60 min), or Instagram/YouTube is opened, or "Resume now"
- (watcher, alarm → PauseReceiver, timer, boot, or opening the app; whichever comes first)
-        │  Pause.resume: add Detach's own entry to enabled_accessibility_services
-        │  (without WRITE_SECURE_SETTINGS: "Detach is still off" notification → Accessibility settings)
+ Alarm / boot / update / app open → reminder only; stay paused
         ▼
- DetachService.onServiceConnected → Pause.onServiceStarted: clear the pause, "Detach is on" notification
+ Explicit Resume button → short-lived durable user authorization
+        │  optional WRITE_SECURE_SETTINGS: restore own service entry
+        │  otherwise: complete the Accessibility-settings step
+        ▼
+ Service connection verifies pause authorization before initialization
+        │  unauthorized reconnect: disableSelf, preserve pending pause
+        ▼
+ Authorized start → clear pause/authorization, show active status
 ```
+
+Automatic pauses bypass password and anti-distraction enforcement by design. During a pause, Instagram/YouTube and Settings/uninstall are unrestricted. No observer remains to tell when a banking session has ended, so a reminder cannot safely restart protection. A pending pause must also survive process death between persistence and `disableSelf()`; reconnect without explicit authorization is refused before creating overlays or workers.
 
 ## How each screen is recognised
 

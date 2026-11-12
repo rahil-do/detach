@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  packageNames limits this service to Instagram, YouTube, and the system Settings /
-  uninstall screens (only to protect Detach itself from being switched off).
-  Android does not deliver events from any other app (banking, UPI, keyboards...) to it.
+  packageNames is the default event allowlist, narrowed or extended to selected payment
+  packages at runtime. Only Instagram, YouTube, and the Settings / uninstall guard screens
+  may have their content read. SystemUI and payment events are metadata-only routes.
   No flagRetrieveInteractiveWindows: the service cannot list other apps' windows.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:packageNames="com.instagram.android,com.google.android.youtube,com.android.settings,com.google.android.packageinstaller,com.android.packageinstaller,com.samsung.android.packageinstaller,com.miui.packageinstaller"
+    android:packageNames="com.instagram.android,com.google.android.youtube,com.android.settings,com.google.android.packageinstaller,com.android.packageinstaller,com.samsung.android.packageinstaller,com.miui.packageinstaller,com.android.systemui,com.google.android.apps.nbu.paisa.user,com.phonepe.app,net.one97.paytm,in.org.npci.upiapp"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled|typeViewClicked|typeViewSelected"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds"
     android:canRetrieveWindowContent="true"
     android:isAccessibilityTool="false"
-    android:notificationTimeout="120"
+    android:notificationTimeout="16"
     android:description="@string/service_description" />

@@ -2,47 +2,48 @@
 
 Everything happens on one screen in the Detach app.
 
-## The status badge
+## Protection status
 
 | Badge | Meaning |
 |---|---|
-| **● Active** | Detach's Accessibility service is on and working. |
-| **Set up Detach** card | It's off. Follow the steps ([INSTALL.md](INSTALL.md#set-up-both-options)). |
-| **⏸ Paused until 14:35** | A [pause for payments](#pause-for-payments) is running. **Resume now** ends it. |
-| 🔔 *Allow notifications…* | Optional. Tap it so Detach can warn you if an app update breaks it. |
+| **Protection is on** | Detach's Accessibility service is enabled. |
+| **Ready when you are** | It's off. Follow the setup guidance ([INSTALL.md](INSTALL.md#set-up-both-options)). |
+| **Waiting for Android** | Accessibility is enabled but the service is not connected. Protection is not confirmed; check Accessibility if it persists. |
+| **Protection is paused** | A [payment pause](#pause-for-payments) is pending. The displayed time is a reminder only. Tap **Resume protection** after paying. |
+| *Allow notifications…* | Optional protection status, payment reminders and compatibility warnings. |
 
-## Instagram card
+## Instagram controls
 
-The **main switch** turns all Instagram blocking on or off. **Customize ▾** shows the individual parts:
+The **main switch** turns all Instagram blocking on or off. **Customize Instagram** shows the individual controls:
 
 | Switch | What it does | What still works |
 |---|---|---|
-| **Hide home feed** | Covers the posts under the Stories row. Tapping **↑ Back to stories** on the cover scrolls back up. | Stories row, **+** (create), ♡ (notifications) |
+| **Hide home feed** | Covers the posts under the Stories row. Tapping **Back to stories** on the cover scrolls back up. | Stories row when allowed, **+** (create), notifications |
 | **Block Reels tab** | Opening the Reels tab sends you to your DMs. A reel opened anywhere except a chat (or your own profile) is closed. | A reel **sent to you in a DM** plays. Swipe to the next reel and you go back to the chat |
 | **Hide Explore & reels in search** | Covers the Explore grid and any grid of reels/posts in search results. | The search box, account results, the **Accounts** filter |
 | **Hide posts on others' profiles** | Covers the posts/reels grid on other people's profiles. | Their name, bio, highlights, Follow and Message buttons |
+| **Allow Stories** | On by default. Off covers the tray and closes detected Story viewers. | Other Instagram choices remain independent |
+| **Allow DMs** | On by default. Off closes detected inbox/chat screens. | Other Instagram choices remain independent |
+| **Allow reels sent in DMs** | On by default. Off closes detected shared reels even when Reels-tab blocking is off. | Ordinary allowed DMs remain usable |
 
-Always available: DMs, your own profile and its posts, settings, switching between your accounts (long-press the profile tab, or tap your username at the top of your profile), posting posts, stories and reels.
+Your own profile and its posts, settings, account switching and creating posts remain usable. Stories, DMs and shared reels follow their independent controls. With DMs disabled, a blocked Reels tab returns Home or goes Back instead of opening the inbox.
 
-## YouTube card
+## YouTube controls
 
 **Block Shorts**: the Shorts tab sends you back to Home, and a Short opened anywhere else (Home shelf, search, channel, shared link) is closed. Normal videos are untouched.
 
 ## Pause for payments
 
-Some payment apps (Google Pay, BHIM and other UPI apps) won't open while a sideloaded Accessibility app is on. A pause turns Detach off for a few minutes (**5** unless you change it), then back on.
+Some payment apps refuse to open while an accessibility service is enabled. A payment pause fully disables Detach's service, removes the overlays and stops its worker. No foreground service, usage-history watcher or polling timer remains running during the pause.
 
-- **Start a pause:** tap **Pause for 5 minutes** in the app (the button shows the length you set), or tap the ongoing notification **"Detach is on. Tap to pause for payments"**. Detach asks for your fingerprint or password first. If the phone has neither, the notification opens a small window and you tap **Pause** to confirm.
-- **While paused:** the notification says **"Detach paused until 14:35"**, and the app shows the same with a **Resume now** button. Nothing is blocked, and the "Detach is protected" screen is off.
-- **End it early:** tap the notification or **Resume now**. No fingerprint or password needed.
-- **Turning back on by itself** needs a [one-time command from a computer](INSTALL.md#optional-let-detach-turn-itself-back-on-after-a-pause). Without it the pause still works, but when it's over a notification says **"Detach is still off"**; tap it and switch **Use Detach** back on in Accessibility. The app tells you which of the two applies.
-- **Show pause notification** (in the same card) hides the "Detach is on" notification. The button in the app still works, and the "paused" notification is always shown.
+- **Automatic pause:** enable auto-pause and choose your payment/banking apps. Google Pay India, PhonePe, Paytm and BHIM are selected initially. Only the selected app's foreground package name is checked; its screen is not inspected. Other banks must be selected explicitly. A selected app may need to be reopened after the first pause.
+- **Manual pause:** use the app's pause control or the notification's payment-pause action. Manual pauses retain the fingerprint/password confirmation.
+- **While paused:** all Instagram/YouTube blocking and Settings/uninstall protection are off. The app and silent status notification make that state explicit.
+- **Reminder:** choose 1–60 minutes, default 5. The alarm only updates a reminder; it does not restart protection, even after a reboot, app update or opening Instagram/YouTube. Allow notifications to see reminders. Android may deliver the reminder late if exact alarms are unavailable.
+- **Resume after paying:** open Detach and explicitly resume. With the optional [USB grant](INSTALL.md#optional-let-detach-turn-itself-back-on-after-a-pause), this restores the service directly; otherwise turn **Use Detach** back on in Accessibility settings. No grant is required to pause.
+- **Status notification:** the active status opens Detach and offers a separate pause action. Hiding the active notification does not hide the paused-state reminder.
 
-The notification is silent and needs notifications to be allowed for Detach. If the payment app still refuses, close it fully and open it again after pausing.
-
-**Pause length.** The default is 5 minutes. Change it with the − and + buttons on the Pause card, one minute at a time, from 1 to 60. If a password is set, changing it asks for your fingerprint or password.
-
-**Ending early when Instagram or YouTube opens.** With **Usage access** allowed for Detach (the app shows a hint, or Settings → Special app access → Usage access), the pause ends within about a second of Instagram or YouTube being opened, so a pause can't be used to scroll. If you pause while one of them is already open, the pause ends as soon as you return to it. Without Usage access the pause simply runs its full time.
+**Deliberate safety tradeoff:** automatic payment pauses do not ask for a password. Anyone can open a selected payment app to pause protection, then use Instagram/YouTube or disable/uninstall Detach. This is not tamper-proof banking detection. The timer is deliberately only a reminder: with no background watcher, Detach cannot know whether a payment is still in progress, so it stays off until an explicit resume. Configure the selected apps and auto-pause setting accordingly.
 
 ## Password lock
 

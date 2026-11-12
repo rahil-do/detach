@@ -13,15 +13,27 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class InstagramRulesTest {
     private val ctx get() = RuntimeEnvironment.getApplication()
-    private fun rules() = InstagramRules(Settings(ctx), Health(ctx))
+    /** Each test starts from the shipping configuration, despite SharedPreferences persistence. */
+    private fun rules(): InstagramRules {
+        val s = Settings(ctx)
+        s.igEnabled = true
+        s.igFeed = true
+        s.igReelsTab = true
+        s.igExplore = true
+        s.igOtherProfiles = true
+        s.igStories = true
+        s.igMessages = true
+        s.igSharedReels = true
+        return InstagramRules(s, Health(ctx))
+    }
 
     // ---- home feed ----
 
-    @Test fun `home feed is covered below the stories row`() {
+    @Test fun `home feed is covered below the Stories row`() {
         val d = rules().evaluate(instagram().igTabs("feed_tab").igHomeHeader().igFeedPost().snap(), 0)
         assertNull(d.action)
         assertTrue(d.coverIsHomeFeed)
-        assertEquals(695, d.cover!!.top)      // bottom of the stories row
+        assertEquals(695, d.cover!!.top)      // bottom of the Stories row
         assertEquals(2509, d.cover!!.bottom)  // top of the tab bar
     }
 
@@ -31,6 +43,33 @@ class InstagramRulesTest {
         assertNotNull(d.cover)
         assertTrue(d.coverIsHomeFeed)
         assertNull(d.action)
+    }
+
+    @Test fun `a slightly scrolled Home feed stays covered after its header leaves the screen`() {
+        val s = instagram().igTabs("feed_tab")
+            .node(id = "feed_media_container", l = 0, t = 0, r = W, b = 2509)
+        val d = rules().evaluate(s.snap(), 0)
+        assertNotNull(d.cover)
+        assertTrue(d.coverIsHomeFeed)
+        assertEquals(0, d.cover!!.top)
+        assertEquals(2509, d.cover!!.bottom)
+    }
+
+    @Test fun `Home feed is left available when its individual switch is off`() {
+        val r = rules()
+        Settings(ctx).igFeed = false
+        val d = r.evaluate(instagram().igTabs("feed_tab").igHomeHeader().igFeedPost().snap(), 0)
+        assertNull(d.cover)
+        assertNull(d.action)
+    }
+
+    @Test fun `disabling Stories covers the Story tray before a Story can open`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        val d = r.evaluate(instagram().igTabs("feed_tab").igHomeHeader().igFeedPost().snap(), 0)
+        assertEquals(286, d.cover!!.top) // top of the tray, not its bottom
+        assertEquals("Stories and feed hidden by Detach", d.coverLabel)
+        assertFalse(d.coverBackToTop)
     }
 
     @Test fun `story viewer is never covered`() {
@@ -50,13 +89,131 @@ class InstagramRulesTest {
     }
 
     @Test fun `nothing happens when Instagram blocking is switched off`() {
+        val r = rules()
         Settings(ctx).igEnabled = false
-        val d = rules().evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 0)
+        val d = r.evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 0)
         assertNull(d.cover)
         assertNull(d.action)
     }
 
+    @Test fun `Stories are allowed by default but close when their individual switch is off`() {
+        val r = rules()
+        assertNull(r.evaluate(instagram().igStoryViewer().snap(), 0).action)
+        Settings(ctx).igStories = false
+        assertTrue(r.evaluate(instagram().igStoryViewer().snap(), 1_000).action is Action.Back)
+    }
+
+    @Test fun `a Story opened from the tray closes even when Instagram changes its viewer id`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(100)
+        val unknownViewer = instagram().node(id = "full_screen_media", l = 0, t = 0, r = W, b = H)
+        assertTrue(r.evaluate(unknownViewer.snap(), 200).action is Action.Back)
+    }
+
+    @Test fun `the Stories fallback expires and cannot close an unrelated later screen`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(0)
+        val laterScreen = instagram().node(id = "full_screen_media", l = 0, t = 0, r = W, b = H)
+        assertNull(r.evaluate(laterScreen.snap(), 5_001).action)
+    }
+
+    @Test fun `DMs are allowed by default but close when their individual switch is off`() {
+        val r = rules()
+        assertNull(r.evaluate(instagram().igTabs("direct_tab").igDmThread().snap(), 0).action)
+        Settings(ctx).igMessages = false
+        assertTrue(r.evaluate(instagram().igTabs("direct_tab").igDmThread().snap(), 1_000).action is Action.Back)
+    }
+
     // ---- reels ----
+
+    @Test fun `a shared Reel stays blocked even when the Reels tab is allowed`() {
+        val r = rules()
+        Settings(ctx).igSharedReels = false
+        Settings(ctx).igReelsTab = false
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 10_000).action)
+        assertTrue(r.evaluate(instagram().igReelViewer("friend").snap(), 11_000).action is Action.Back)
+    }
+
+    @Test fun `leaving a blocked Story never closes an allowed DM thread`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(10_000)
+        assertTrue(r.evaluate(instagram().igStoryViewer().snap(), 10_100).action is Action.Back)
+        assertNull(r.evaluate(instagram().igTabs("feed_tab").igHomeHeader().snap(), 10_500).action)
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 11_000).action)
+    }
+
+    @Test fun `a Story tap cannot misidentify a DM as a renamed viewer`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(10_000)
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 10_100).action)
+    }
+
+    @Test fun `the Story fallback is not armed at service startup`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        assertNull(r.evaluate(instagram().node(id = "full_screen_media").snap(), 0).action)
+    }
+
+    @Test fun `visiting a DM disarms the Story fallback before opening a chat attachment`() {
+        val r = rules()
+        Settings(ctx).igStories = false
+        r.onStoryTrayTapped(10_000)
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 10_100).action)
+        assertNull(r.evaluate(instagram().node(id = "full_screen_media").snap(), 10_200).action)
+    }
+
+    @Test fun `allowed Stories ignore stale Home tabs and header nodes`() {
+        val d = rules().evaluate(instagram().igTabs("feed_tab").igHomeHeader().igStoryViewer().snap(), 1000)
+        assertNull(d.action)
+        assertNull(d.cover)
+    }
+
+    @Test fun `a permitted Reels tab cannot inherit shared reel restrictions from a chat`() {
+        val r = rules()
+        Settings(ctx).igReelsTab = false
+        Settings(ctx).igSharedReels = false
+        r.evaluate(instagram().igDmThread().snap(), 10_000)
+        assertNull(r.evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 10_100).action)
+    }
+
+    @Test fun `shared reel permission changes apply without reopening the viewer`() {
+        val r = rules()
+        val shared = instagram().igReelViewer("friend").snap()
+        r.evaluate(instagram().igDmThread().snap(), 10_000)
+        assertNull(r.evaluate(shared, 10_100).action)
+        Settings(ctx).igSharedReels = false
+        assertTrue(r.evaluate(shared, 10_200).action is Action.Back)
+        Settings(ctx).igSharedReels = true
+        assertNull(r.evaluate(shared, 10_300).action)
+        Settings(ctx).igMessages = false
+        assertTrue(r.evaluate(shared, 10_400).action is Action.Back)
+    }
+
+    @Test fun `resetting Instagram context cannot grant a reel the previous chats permission`() {
+        val r = rules()
+        r.evaluate(instagram().igDmThread().snap(), 10_000)
+        r.reset()
+        assertTrue(r.evaluate(instagram().igReelViewer("external").snap(), 10_100).action is Action.Back)
+    }
+
+    @Test fun `a tall shared reel preview inside a DM is not mistaken for an opened viewer`() {
+        val d = rules().evaluate(instagram().igDmThread()
+            .node(desc = "Reel by a friend", l = 0, t = 400, r = W, b = 2400).snap(), 10_000)
+        assertNull(d.action)
+        assertNull(d.cover)
+    }
+
+    @Test fun `Reels exits to Home rather than a disabled inbox`() {
+        val r = rules()
+        Settings(ctx).igMessages = false
+        val d = r.evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 10_000)
+        assertTrue(d.action is Action.Click)
+        assertEquals("feed_tab", (d.action as Action.Click).node.id)
+    }
 
     @Test fun `reels tab redirects to DMs`() {
         val d = rules().evaluate(instagram().igTabs("clips_tab").igReelViewer("x").snap(), 0)
@@ -76,6 +233,22 @@ class InstagramRulesTest {
         assertNull(r.evaluate(instagram().igReelViewer("friend").snap(), 1_000).action)
         assertNull(r.evaluate(instagram().igReelViewer("friend").snap(), 5_000).action)
         assertTrue(r.evaluate(instagram().igReelViewer("stranger").snap(), 6_000).action is Action.Back)
+    }
+
+    @Test fun `a shared reel closes when its individual permission is off`() {
+        val r = rules()
+        Settings(ctx).igSharedReels = false
+        assertNull(r.evaluate(instagram().igDmThread().snap(), 0).action)
+        assertTrue(r.evaluate(instagram().igReelViewer("friend").snap(), 1_000).action is Action.Back)
+    }
+
+    @Test fun `shared Reel setting does not block a reel from your own profile`() {
+        val r = rules()
+        Settings(ctx).igSharedReels = false
+        val own = instagram().igTabs("profile_tab").igProfileHeader()
+            .node(desc = "Edit profile", t = 1036, b = 1135, r = 549)
+        assertNull(r.evaluate(own.snap(), 0).action)
+        assertNull(r.evaluate(instagram().igReelViewer("me").snap(), 1_000).action)
     }
 
     @Test fun `a swipe in the reel viewer goes back even if the reel can't be identified`() {
@@ -109,6 +282,14 @@ class InstagramRulesTest {
         assertNull(d.action)
         assertEquals(308, d.cover!!.top)
         assertEquals(2509, d.cover!!.bottom)
+        assertTrue(d.coverBackToSearch)
+    }
+
+    @Test fun `Explore is left available when its individual switch is off`() {
+        val r = rules()
+        Settings(ctx).igExplore = false
+        val s = instagram().igTabs("search_tab").igGridTile(1, 1, 308).igGridTile(1, 2, 308)
+        assertNull(r.evaluate(s.snap(), 0).cover)
     }
 
     @Test fun `account search results are left alone`() {
@@ -124,6 +305,12 @@ class InstagramRulesTest {
         val d = rules().evaluate(instagram().igTabs("search_tab").igProfileHeader().snap(), 0)
         assertNull(d.action)
         assertEquals(1496, d.cover!!.top)
+    }
+
+    @Test fun `other profile posts are left available when their individual switch is off`() {
+        val r = rules()
+        Settings(ctx).igOtherProfiles = false
+        assertNull(r.evaluate(instagram().igTabs("search_tab").igProfileHeader().snap(), 0).cover)
     }
 
     @Test fun `your own profile is not covered`() {

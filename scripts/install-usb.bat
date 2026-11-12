@@ -22,14 +22,8 @@ echo Waiting for the phone... plug it in and tap "Allow" on the USB debugging po
 echo Installing %~1 ...
 "%ADB%" install -r "%~1"
 if errorlevel 1 exit /b 1
-rem Best effort: lets Detach turn itself back on after a "pause for payments" (see docs\INSTALL.md).
-"%ADB%" shell pm grant io.github.detach android.permission.WRITE_SECURE_SETTINGS >nul 2>nul
-if errorlevel 1 (
-  echo Note: could not grant WRITE_SECURE_SETTINGS. After a pause you will turn Detach back on by hand.
-) else (
-  echo Allowed Detach to turn itself back on after a pause.
-)
 "%ADB%" shell am start -n io.github.detach/.MainActivity >nul 2>nul
 echo.
 echo Done. On the phone: Accessibility - Detach - turn on "Use Detach".
 echo You can turn USB debugging off afterwards; Detach keeps working.
+echo No extra permissions were granted. Optional one-tap Resume setup is in docs\INSTALL.md.

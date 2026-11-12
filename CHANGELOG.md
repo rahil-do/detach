@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 (2026-11-13)
+
+- Redesigned native screens with restrained light/dark styling, accessible controls, preserved disclosure/scroll state and reduced-motion-aware transitions.
+- Faster opaque covers, in-place overlay updates, bounded loading-state retention and stale-action/foreground checks reduce content flashes without fading protected content into view.
+- Fixed notification-shade recovery, independent shared-reel controls, Story/DM misclassification, split-screen geometry and false YouTube Shorts-player detection.
+- Local, selected-package banking auto-pause disables protection completely. The duration is a reminder only: explicit Resume is required, with no background watcher or Usage access.
+- A selected banking app intentionally bypasses password protection. While paused, nothing is blocked, including disabling/uninstalling Detach. Unknown banks and embedded payment flows are not automatically detected.
+- Added single-use, three-minute, boot/monotonic-bound resume authorization to reject unapproved reconnects during a pending pause. Alarms, reboot, updates and app/notification opens cannot authorize resume.
+- Polished silent/private status notifications and deduplicated compatibility alerts; release builds have no inspector receiver. Debug inspection rejects payment/SystemUI/Settings, foreign-package and password content.
+- USB installation no longer silently grants secure-settings access. No runtime networking, analytics, broad package permission, or new runtime dependencies.
+
 ## 0.3.0 (2026-11-10)
 
 - Renamed the app to **Detach** (it was called Unreel until 0.2.3). The package id changed to `io.github.detach`, so it installs as a new app: uninstall the old one, install this one, and set it up again (switches, password, and the optional adb grants).

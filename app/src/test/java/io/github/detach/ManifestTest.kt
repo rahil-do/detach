@@ -1,5 +1,6 @@
 package io.github.detach
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import org.junit.Assert.assertEquals
@@ -45,6 +46,43 @@ class ManifestTest {
         assertEquals(0, ctx.applicationInfo.flags and ApplicationInfo.FLAG_ALLOW_BACKUP)
     }
 
+    @Test fun `backup and device transfer rules exclude every private storage domain`() {
+        ctx.assets.openXmlResourceParser("AndroidManifest.xml").use { manifest ->
+            while (manifest.eventType != XmlPullParser.END_DOCUMENT) {
+                if (manifest.eventType == XmlPullParser.START_TAG && manifest.name == "application") {
+                    assertEquals(R.xml.data_extraction_rules, manifest.getAttributeResourceValue(
+                        "http://schemas.android.com/apk/res/android", "dataExtractionRules", 0))
+                    assertEquals("false", manifest.getAttributeValue(
+                        "http://schemas.android.com/apk/res/android", "fullBackupContent"))
+                    break
+                }
+                manifest.next()
+            }
+        }
+        val rules = ctx.resources.getXml(R.xml.data_extraction_rules)
+        val exclusions = mutableMapOf<String, MutableSet<String>>()
+        var mode = ""
+        while (rules.eventType != XmlPullParser.END_DOCUMENT) {
+            if (rules.eventType == XmlPullParser.START_TAG) {
+                when (rules.name) {
+                    "cloud-backup", "device-transfer" -> {
+                        mode = rules.name
+                        exclusions[mode] = mutableSetOf()
+                    }
+                    "include" -> throw AssertionError("Backup includes must not be enabled")
+                    "exclude" -> {
+                        assertEquals(".", rules.getAttributeValue(null, "path"))
+                        exclusions.getValue(mode).add(rules.getAttributeValue(null, "domain"))
+                    }
+                }
+            }
+            rules.next()
+        }
+        val domains = setOf("root", "file", "database", "sharedpref", "external", "device_root",
+            "device_file", "device_database", "device_sharedpref")
+        assertEquals(mapOf("cloud-backup" to domains, "device-transfer" to domains), exclusions)
+    }
+
     @Test fun `Android only sends Detach events from the apps the code expects`() {
         val xml = ctx.resources.getXml(R.xml.accessibility_config)
         var packages: Set<String>? = null
@@ -58,11 +96,35 @@ class ManifestTest {
             xml.next()
         }
         assertEquals(Targets.ALL, packages)
-        // No banking, UPI or wallet app may ever be on the list.
-        assertTrue(packages!!.none { p -> listOf("pay", "upi", "bank", "phonepe", "paytm", "bhim").any { p.contains(it) } })
+        assertEquals(Targets.ALL, Settings(ctx).eventPackages())
+        assertTrue(Targets.READABLE.intersect(Targets.PAYMENT_DEFAULTS + Targets.SYSTEM_UI).isEmpty())
         // flagRetrieveInteractiveWindows (0x40) would let it inspect other apps' windows.
         val f = flags.orEmpty()
         val value = f.removePrefix("0x").toIntOrNull(16) ?: f.toIntOrNull() ?: 0
         assertEquals(0, value and 0x40)
+        assertTrue(f == "flagReportViewIds" || value == AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS)
+    }
+
+    @Test fun `no usage monitor foreground service or broad package permission is requested`() {
+        val permissions = info.requestedPermissions.orEmpty().toSet()
+        assertFalse("android.permission.PACKAGE_USAGE_STATS" in permissions)
+        assertFalse(permissions.any { it.startsWith("android.permission.FOREGROUND_SERVICE") })
+        assertFalse("android.permission.QUERY_ALL_PACKAGES" in permissions)
+        assertEquals(listOf("io.github.detach.DetachService"), info.services.orEmpty().map { it.name })
+    }
+
+    @Test fun `permission surface is limited to local authentication reminders and explicit resume`() {
+        assertEquals(
+            setOf(
+                "android.permission.POST_NOTIFICATIONS", "android.permission.USE_BIOMETRIC",
+                "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.WRITE_SECURE_SETTINGS",
+            ),
+            info.requestedPermissions.orEmpty().toSet(),
+        )
+        assertEquals(0, ctx.applicationInfo.flags and ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC)
+        assertTrue(info.providers.orEmpty().isEmpty())
+        val receiver = info.receivers.orEmpty().single()
+        assertEquals("io.github.detach.PauseReceiver", receiver.name)
+        assertFalse(receiver.exported)
     }
 }

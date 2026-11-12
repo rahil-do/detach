@@ -50,4 +50,22 @@ class YouTubeRulesTest {
             .node(desc = "Home", l = 320, t = 2300, r = 620, b = 2400, clickable = true)
         assertTrue(rules().evaluate(s.snap()).action is Action.Back)
     }
+
+    @Test fun `a Shorts player is still detected in a small split screen window`() {
+        val s = youtube().window(600, 300, W, 1100)
+            .node(id = "shorts_player_container", l = 600, t = 350, r = W, b = 1050)
+        assertTrue(rules().evaluate(s.snap()).action is Action.Back)
+    }
+
+    @Test fun `off window Shorts nodes cannot block the visible split screen app`() {
+        val s = youtube().window(600, 300, W, 1100)
+            .node(id = "shorts_player_container", l = 0, t = 1200, r = W, b = H)
+        assertNull(rules().evaluate(s.snap()).action)
+    }
+
+    @Test fun `a tall Shorts shelf on Home is not mistaken for an opened player`() {
+        val s = youtube().pivot("Home")
+            .node(id = "shorts_shelf", l = 0, t = 500, r = W, b = 2400)
+        assertNull(rules().evaluate(s.snap()).action)
+    }
 }

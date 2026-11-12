@@ -7,6 +7,15 @@ object Targets {
     /** Apps whose content is blocked. */
     val PACKAGES = setOf(INSTAGRAM, YOUTUBE)
 
+    val SYSTEM_UI = setOf("com.android.systemui")
+
+    val PAYMENT_DEFAULTS = setOf(
+        "com.google.android.apps.nbu.paisa.user",
+        "com.phonepe.app",
+        "net.one97.paytm",
+        "in.org.npci.upiapp",
+    )
+
     /**
      * System screens where Detach could be switched off, force-stopped, cleared or uninstalled.
      * Detach only looks for its own name on them, to put up the "protected" screen.
@@ -19,6 +28,9 @@ object Targets {
         "com.miui.packageinstaller",
     )
 
-    /** Everything the service is allowed to see (must match res/xml/accessibility_config.xml). */
-    val ALL = PACKAGES + GUARDED
+    /** Packages whose window content may be read for blocking or protecting Detach. */
+    val READABLE = PACKAGES + GUARDED
+
+    /** Default event routing only; SystemUI and payment events never grant content access. */
+    val ALL = READABLE + SYSTEM_UI + PAYMENT_DEFAULTS
 }

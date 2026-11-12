@@ -24,19 +24,13 @@ fi
 echo "Installing $apk…"
 adb install -r "$apk"
 
-# Best effort: lets Detach turn itself back on after a "pause for payments" (see docs/INSTALL.md).
-if adb shell pm grant io.github.detach android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1; then
-  echo "Allowed Detach to turn itself back on after a pause."
-else
-  echo "Note: couldn't grant WRITE_SECURE_SETTINGS; after a pause you'll turn Detach back on by hand (see docs/INSTALL.md)."
-fi
-
 echo "Opening Detach…"
 adb shell am start -n io.github.detach/.MainActivity >/dev/null 2>&1 || true
 
 cat <<'MSG'
 
-Done. On the phone, follow "Set up Detach":
+Done. On the phone, follow Detach's setup guidance:
   Accessibility → Detach → turn on "Use Detach".
 You can turn USB debugging off afterwards; Detach keeps working.
+No extra permissions were granted. Optional one-tap Resume setup is in docs/INSTALL.md.
 MSG

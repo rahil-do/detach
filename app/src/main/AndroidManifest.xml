@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Fingerprint as an alternative to the Detach password. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
-    <!-- Only to finish a "pause for payments" that a reboot interrupted. -->
+    <!-- Only to restore a payment reminder after a reboot, never to resume protection. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
       Optional, and never granted by installing: the owner grants it once over adb. Used for one
@@ -19,22 +19,21 @@
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
-    <!--
-      Optional special access, granted by the owner (Settings > Usage access, or adb). Used only
-      during a pause, to notice Instagram or YouTube being opened and end the pause early.
-    -->
-    <uses-permission
-        android:name="android.permission.PACKAGE_USAGE_STATS"
-        tools:ignore="ProtectedPermissions" />
-    <!-- The short-lived watcher that runs during a pause. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.Detach">
 
         <activity
@@ -66,7 +65,7 @@
             android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar" />
 
         <!--
-          Ends a pause: Detach's own alarm and notification (explicit intents), and Android's
+          Restores reminders only: Detach's own alarm (explicit intent), and Android's
           boot / app-updated broadcasts. Not exported, so no other app can send to it.
         -->
         <receiver
@@ -77,16 +76,6 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
-
-        <!-- Runs only during a pause; ends it early when Instagram or YouTube is opened. -->
-        <service
-            android:name=".PauseWatchService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Watches for Instagram or YouTube being opened during a user-started pause of a few minutes, to end the pause" />
-        </service>
 
         <service
             android:name=".DetachService"
