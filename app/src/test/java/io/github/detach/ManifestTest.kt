@@ -129,8 +129,8 @@ class ManifestTest {
         )
         assertEquals(0, ctx.applicationInfo.flags and ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC)
         assertTrue(info.providers.orEmpty().isEmpty())
-        val receiver = info.receivers.orEmpty().single()
-        assertEquals("io.github.detach.PauseReceiver", receiver.name)
-        assertFalse(receiver.exported)
+        assertEquals(setOf("io.github.detach.PauseReceiver", "io.github.detach.PaymentWidgetProvider"),
+            info.receivers.orEmpty().map { it.name }.toSet())
+        info.receivers.orEmpty().forEach { assertFalse(it.exported) }
     }
 }

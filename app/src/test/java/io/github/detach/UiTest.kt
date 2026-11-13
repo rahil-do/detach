@@ -43,6 +43,8 @@ class UiTest {
 
     @Before fun reset() {
         for (name in listOf("settings", "lock", "pause")) context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences(MainActivity.UPDATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(MainActivity.WIDGET_UPDATE_KEY, true).commit()
         SystemSettings.Global.putFloat(context.contentResolver, SystemSettings.Global.ANIMATOR_DURATION_SCALE, 0f)
         SystemSettings.Secure.putString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
         Shadow.extract<ShadowBiometricManager>(context.getSystemService(BiometricManager::class.java)).setCanAuthenticate(false)
@@ -334,6 +336,27 @@ class UiTest {
         assertEquals(View.VISIBLE, notice.visibility)
         assertTrue(notice.text.contains("until protection resumes"))
         assertTrue(notice.text.contains("embedded payments are not"))
+    }
+
+    @Test fun `payment section exposes the widget action`() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        assertNotNull(button(activity, "Add payment widget"))
+    }
+
+    @Test fun `widget update details are shown once`() {
+        context.getSharedPreferences(MainActivity.UPDATE_PREFS, Context.MODE_PRIVATE).edit().clear().commit()
+        val first = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val dialog = ShadowAlertDialog.getLatestAlertDialog()
+        assertTrue(dialog.isShowing)
+        assertEquals("New: Payment widget", shadowOf(dialog).title.toString())
+        assertTrue(shadowOf(dialog).message.toString().contains("1×1 up to 2×4"))
+        assertTrue(context.getSharedPreferences(MainActivity.UPDATE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(MainActivity.WIDGET_UPDATE_KEY, false))
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
+        first.finish()
+
+        Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        assertFalse(ShadowAlertDialog.getLatestAlertDialog().isShowing)
     }
 
     @Test fun `enabled accessibility without a connected service never claims active protection`() {
