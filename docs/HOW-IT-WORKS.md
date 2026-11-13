@@ -57,17 +57,23 @@ A lightweight **foreground watchdog** runs only while an overlay is visible. It 
 | `Inspector.kt` | adb-only tree dump / event trace for updating rules |
 | `MainActivity.kt` | The app's single screen: setup, pause, switches, password, privacy, diagnostics |
 | `Targets.kt` | The package lists |
+| `PauseTileService.kt` | "Pause for payment" Quick Settings tile; opens the authenticated pause confirmation (`PauseActivity`, which also offers "Pause and open <selected app>") |
+| `OtherAccessibilityApps.kt` | Labels of other enabled non-system accessibility apps, for the Payments warning |
 
 ## Pause for payments
 
 ```
- Selected payment app → validate foreground package name only
- OR manual pause → Auth.confirm
+ Selected app (UPI, bank or an app you pay from) is the active window → package name only
+   (an event alone pauses only while no active window is reported; otherwise ~1 s re-checks)
+ OR manual pause (app, notification or Quick Settings tile) → Auth.confirm
+   (optional "Pause and open": launch the selected app only after Detach leaves
+    enabled_accessibility_services, polled for at most 2 s)
         ▼
  Persist pause successfully · remove overlays · cancel protection worker · disableSelf()
+        │  then: replace alarms, paused notification
         │  one immutable timer; optional consented package monitor
         ▼
- Valid due timer OR opt-in observed social app → one automatic enable attempt
+ Valid due timer (not while off/locked) OR opt-in observed social app → one automatic enable attempt
         │  requires secure-settings grant; otherwise reminder/manual Settings
         │  boot/update revoke auto authority; app opens never renew it
         ▼
@@ -78,10 +84,12 @@ A lightweight **foreground watchdog** runs only while an overlay is visible. It 
  Service connection verifies pause authorization before initialization
         │  unauthorized reconnect: disableSelf, preserve pending pause
         ▼
- Authorized start → clear pause/authorization, show active status
+ Authorized start → selected app still in front? pause again (re-checked for ~1 s)
+        ▼
+ Otherwise → clear pause/authorization, show active status
 ```
 
-Automatic pauses bypass password and anti-distraction enforcement by design. During a pause, Instagram/YouTube and Settings/uninstall are unrestricted. Timer-only mode cannot know whether banking has finished. Optional monitoring queries package events, never bank nodes, and provides only best-effort fresh-bank deferral. A pending pause survives process death between persistence and `disableSelf()`; reconnect without one-use authorization is refused before creating overlays/workers. Storage failure prevents disabling without a durable pause. See [automatic resume policy](automatic-payment-resume.md).
+Automatic pauses bypass password and anti-distraction enforcement by design. During a pause, Instagram/YouTube and Settings/uninstall are unrestricted. Timer-only mode cannot know whether banking has finished. Optional monitoring queries package events, never bank nodes, and defers while a selected app is observed in front. Payment apps can check for accessibility services as they launch, so the reliable setups are selecting the app you pay from or using "Pause and open"; see [why](automatic-payment-resume.md#why-payment-apps-refuse-and-when-detach-must-already-be-off). A pending pause survives process death between persistence and `disableSelf()`; reconnect without one-use authorization is refused before creating overlays/workers. Storage failure prevents disabling without a durable pause. See [automatic resume policy](automatic-payment-resume.md).
 
 Breather permissions are a read-only feature snapshot supplied to the rules, not rewritten permanent switches. A running service schedules reevaluation at expiry and on early-end/settings refresh. DMs navigation rechecks effective temporary permission before each action. Settings/Guard and payment routing remain outside those allowances; a payment pause wins. Sessions fail closed on reboot, process restart, invalid data or clock inconsistency.
 

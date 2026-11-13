@@ -82,6 +82,9 @@ object PaymentAppPicker {
         bitmap
     }.getOrNull()
 
+    internal const val HINT = "Detach pauses while any selected app is open. Include the apps you pay from, " +
+        "e.g. investing or shopping apps, so it is already off when they open a UPI app."
+
     private val PACKAGE_LABEL = Regex("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+")
 
     private class Session(private val activity: Activity, private var onSaved: (() -> Unit)?) :
@@ -150,10 +153,14 @@ object PaymentAppPicker {
             override fun afterTextChanged(text: Editable?) = Unit
         }
         private val dialog = AlertDialog.Builder(activity)
-            .setTitle("Auto-pause apps")
+            .setTitle("UPI, bank & checkout apps")
             .setView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0)
+                addView(ui.note(HINT).apply {
+                    tag = "payment-app-hint"
+                    setPadding(0, 0, 0, ui.dp(10))
+                })
                 addView(search)
                 addView(summary)
                 addView(android.widget.FrameLayout(activity).apply {

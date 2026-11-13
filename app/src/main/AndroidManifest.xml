@@ -27,6 +27,13 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!--
+          Lets the Payments section name other apps whose accessibility service is switched on
+          (label and system/installed flag only). Nothing about them is stored or changed.
+        -->
+        <intent>
+            <action android:name="android.accessibilityservice.AccessibilityService" />
+        </intent>
     </queries>
 
     <application
@@ -58,7 +65,7 @@
             android:theme="@style/Theme.Detach.Dialog"
             android:windowSoftInputMode="stateVisible" />
 
-        <!-- "Pause for payments" confirmation, opened from Detach's own notification. Not reachable by other apps. -->
+        <!-- "Pause for payments" confirmation, opened from Detach's own notification or tile. Not reachable by other apps. -->
         <activity
             android:name=".PauseActivity"
             android:exported="false"
@@ -66,6 +73,22 @@
             android:noHistory="true"
             android:taskAffinity=""
             android:theme="@style/Theme.Detach.Dialog" />
+
+        <!--
+          "Pause for payment" Quick Settings tile. Exported only so System UI can bind it; the
+          BIND_QUICK_SETTINGS_TILE permission keeps every other app out. A tap opens the same
+          confirmation as the notification action and never pauses by itself.
+        -->
+        <service
+            android:name=".PauseTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_pause"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
         <!--
           Detach's explicit timer may spend existing pause authority; Android's boot / update

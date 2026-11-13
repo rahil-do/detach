@@ -181,23 +181,91 @@ class AutomaticPauseTest {
         assertNotNull(Pause.automaticToken(context))
     }
 
-    @Test fun `timer suppression prevents same bank loops but does not bypass another bank or a later visit`() {
+    @Test fun `a timer resume never exempts the selected app it paused for`() {
         grant()
         begin()
         advance()
         Pause.onTimer(context)
-        assertFalse(Pause.shouldAutoPausePayment(context, bank))
-        Pause.onServiceStarted(context)
-        assertFalse(Pause.shouldAutoPausePayment(context, bank))
-        assertFalse(Pause.shouldAutoPausePayment(context, "com.android.systemui"))
-        assertFalse(Pause.shouldAutoPausePayment(context, bank))
-        assertFalse(Pause.shouldAutoPausePayment(context, Targets.INSTAGRAM))
+        assertTrue(Pause.consumeResumeAuthorization(context))
+        // Still in the same app when Detach reconnects: it must pause again, not protect it.
         assertTrue(Pause.shouldAutoPausePayment(context, bank))
+        assertFalse(Pause.shouldAutoPausePayment(context, "com.android.systemui"))
+        assertFalse(Pause.shouldAutoPausePayment(context, Targets.INSTAGRAM))
+        Pause.onServiceStarted(context)
+        assertTrue(Pause.shouldAutoPausePayment(context, bank))
+    }
+
+    private fun locked(screenOn: Boolean, keyguard: Boolean) {
+        shadowOf(context.getSystemService(android.os.PowerManager::class.java)).setIsInteractive(screenOn)
+        shadowOf(context.getSystemService(android.app.KeyguardManager::class.java)).setKeyguardLocked(keyguard)
+    }
+
+    @Test fun `a due timer waits for an unlock instead of resuming behind the lock screen`() {
+        grant()
+        begin()
+        advance()
+        // A payment app left on its PIN screen while the screen timed out.
+        for ((screenOn, keyguard) in listOf(false to true, true to true, false to false)) {
+            locked(screenOn, keyguard)
+            Pause.onTimer(context)
+            assertFalse("screen=$screenOn keyguard=$keyguard", Pause.consumeResumeAuthorization(context))
+            assertNotNull(Pause.automaticToken(context))
+            val retry = shadowOf(context.getSystemService(AlarmManager::class.java)).scheduledAlarms.single()
+            assertTrue(retry.triggerAtTime > System.currentTimeMillis())
+            assertTrue(retry.triggerAtTime <= System.currentTimeMillis() + Pause.LOCKED_RETRY_MS)
+        }
+        locked(screenOn = true, keyguard = false)
+        Pause.onTimer(context)
+        assertTrue(Pause.consumeResumeAuthorization(context))
+    }
+
+    @Test fun `a locked phone cannot hold the pause past its automatic authority`() {
+        grant()
+        begin()
+        advance(60_001L + Pause.AUTOMATIC_DELAY_MS - Pause.LOCKED_DEFER_MARGIN_MS)
+        locked(screenOn = false, keyguard = true)
+        assertNotNull(Pause.automaticToken(context))
+        Pause.onTimer(context)
+        assertTrue(Pause.consumeResumeAuthorization(context))
+        locked(screenOn = true, keyguard = false)
+    }
+
+    @Test fun `re-pausing over a selected app cannot become a tight enable and disable loop`() {
+        grant()
         begin()
         advance()
         Pause.onTimer(context)
-        advance(Pause.RESUME_AUTHORIZATION_MS + 1L)
+        assertTrue(Pause.consumeResumeAuthorization(context))
+        assertTrue(Pause.begin(context, bank))
+        // The new pause's timer is a full pause length away and grants nothing earlier.
+        assertFalse(Pause.timerDue(context))
+        Pause.onTimer(context)
+        assertFalse(Pause.consumeResumeAuthorization(context))
+    }
+
+    @Test fun `legacy suppression state from older builds is ignored and cleared`() {
+        stored.edit().putString("suppressed_payment", bank).putLong("suppressed_elapsed", SystemClock.elapsedRealtime())
+            .putInt("suppressed_boot", SystemSettings.Global.getInt(context.contentResolver, SystemSettings.Global.BOOT_COUNT, 0)).commit()
         assertTrue(Pause.shouldAutoPausePayment(context, bank))
+        begin()
+        assertFalse(stored.contains("suppressed_payment"))
+        stored.edit().putString("suppressed_payment", bank).commit()
+        Pause.onServiceStarted(context)
+        assertFalse(stored.contains("suppressed_payment"))
+    }
+
+    @Test fun `after a restart the paused status no longer promises an automatic resume`() {
+        grant()
+        begin()
+        assertTrue(Pause.resumesAutomatically(context))
+        PauseReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        assertTrue(Pause.isPending(context))
+        assertFalse(Pause.resumesAutomatically(context))
+        StatusNotifications.refresh(context)
+        val status = shadowOf(context.getSystemService(android.app.NotificationManager::class.java)).getNotification(Pause.NOTIFICATION_ID)
+        val text = status.extras.getString(android.app.Notification.EXTRA_TEXT).orEmpty()
+        assertFalse(text.contains("Automatic resume"))
+        assertTrue(text.contains("tap Resume"))
     }
 
     @Test fun `failed pause persistence is reported before scheduling or monitor startup`() {

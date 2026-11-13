@@ -31,37 +31,68 @@ internal class ForegroundPackages {
         private set
     private var foregroundUpdatedAt = 0L
     private val payments = mutableMapOf<String, Long>()
+    /** Unobserved starting-package hints: only [STATE_MAX_MS], like any other unconfirmed hint. */
+    private val hints = mutableMapOf<String, Long>()
 
     fun accept(packageName: String, eventType: Int, paymentPackages: Set<String>, observedAt: Long) {
         when (eventType) {
             UsageEvents.Event.MOVE_TO_FOREGROUND -> {
                 foreground = packageName
                 foregroundUpdatedAt = observedAt
-                if (packageName in paymentPackages) payments[packageName] = observedAt
+                if (packageName in paymentPackages) {
+                    payments[packageName] = observedAt
+                    hints.remove(packageName)
+                }
             }
             UsageEvents.Event.MOVE_TO_BACKGROUND -> {
                 payments.remove(packageName)
+                hints.remove(packageName)
                 if (foreground == packageName) foreground = null
             }
         }
         payments.keys.retainAll(paymentPackages)
+        hints.keys.retainAll(paymentPackages)
+    }
+
+    /**
+     * The selected app that started the pause, before any usage event for it is observed (its own
+     * foreground event predates the pause). [inFront]: it was read from the active window, so it
+     * is held like an observed foreground. Otherwise the pause came from an event alone, the app
+     * may never have been in front, and it is only a [STATE_MAX_MS] hint.
+     */
+    fun seed(packageName: String, paymentPackages: Set<String>, observedAt: Long, inFront: Boolean) {
+        if (packageName !in paymentPackages) return
+        if (inFront) payments[packageName] = observedAt else hints[packageName] = observedAt
     }
 
     fun foregroundAt(now: Long): String? = foreground.takeIf { now - foregroundUpdatedAt in 0..STATE_MAX_MS }
 
+    /**
+     * A selected app (UPI, bank or an app the owner pays from) is still in front. Its evidence
+     * lasts until Android reports it moved to the background, not a fixed 30 seconds, so sitting
+     * on one payment or PIN screen does not look like "payment finished". This is only safe
+     * because the monitor clears all state whenever observation is interrupted (screen off or
+     * locked, or a gap between queries longer than [PauseForegroundMonitor.LOOKBACK_MS]), and
+     * [PAYMENT_HOLD_MS] still bounds a missed background event. Unobserved hints from [seed]
+     * keep the short [STATE_MAX_MS] lifetime.
+     */
     fun paymentForegroundAt(now: Long): Boolean {
-        payments.entries.removeAll { now - it.value !in 0..STATE_MAX_MS }
-        return payments.isNotEmpty()
+        payments.entries.removeAll { now - it.value !in 0..PAYMENT_HOLD_MS }
+        hints.entries.removeAll { now - it.value !in 0..STATE_MAX_MS }
+        return payments.isNotEmpty() || hints.isNotEmpty()
     }
 
     fun clear() {
         foreground = null
         payments.clear()
+        hints.clear()
         foregroundUpdatedAt = 0L
     }
 
     companion object {
         internal const val STATE_MAX_MS = 30_000L
+        /** Upper bound for continuously observed selected-app evidence without a new event. */
+        internal const val PAYMENT_HOLD_MS = 10 * 60_000L
     }
 }
 
@@ -75,6 +106,12 @@ class PauseForegroundMonitor : Service() {
     @Volatile private var stopping = false
     @Volatile private var paymentEvidenceAt = Long.MIN_VALUE
     @Volatile private var paymentCheckedAt = Long.MIN_VALUE
+    /**
+     * When continuous observation (re)started: monitor start, unlock, or after a query gap.
+     * Long.MIN_VALUE while off/locked. Until a poll has passed since then, a payment app that
+     * is returning to the front (for example after unlock) may not have been reported yet.
+     */
+    @Volatile private var observingSince = Long.MIN_VALUE
     private var queryAfter = 0L
     private var registered = false
     private var settings: SharedPreferences? = null
@@ -92,8 +129,12 @@ class PauseForegroundMonitor : Service() {
             handler.removeCallbacks(poll)
             if (!interactiveAndUnlocked()) {
                 paymentEvidenceAt = Long.MIN_VALUE
+                observingSince = Long.MIN_VALUE
                 handler.post { packages.clear() }
-            } else handler.post { if (eligible()) checkForeground() else stopMonitoring() }
+            } else {
+                if (observingSince == Long.MIN_VALUE) observingSince = SystemClock.elapsedRealtime()
+                handler.post { if (eligible()) checkForeground() else stopMonitoring() }
+            }
         }
     }
 
@@ -146,12 +187,18 @@ class PauseForegroundMonitor : Service() {
         handler.post {
             queryAfter = 0L
             packages.clear()
+            observingSince = if (interactiveAndUnlocked()) SystemClock.elapsedRealtime() else Long.MIN_VALUE
             Pause.startingPaymentPackage(this)?.let {
-                packages.accept(it, UsageEvents.Event.MOVE_TO_FOREGROUND, Settings(this).paymentPackages, Pause.startedAt(this))
+                packages.seed(it, Settings(this).paymentPackages, Pause.startedAt(this), Pause.startingPaymentWasInFront(this))
             }
             if (interactiveAndUnlocked()) checkForeground()
         }
         return START_NOT_STICKY
+    }
+
+    private fun settled(): Boolean {
+        val since = observingSince
+        return since != Long.MIN_VALUE && paymentCheckedAt - since >= POLL_MS
     }
 
     private fun eligible() = !stopping && token != null && token == Pause.automaticToken(this) && allowed(this)
@@ -169,7 +216,11 @@ class PauseForegroundMonitor : Service() {
         }
         if (!interactiveAndUnlocked()) return
         val now = System.currentTimeMillis()
-        if (queryAfter > 0L && now - queryAfter > LOOKBACK_MS) packages.clear()
+        if (queryAfter > 0L && now - queryAfter > LOOKBACK_MS) {
+            packages.clear()
+            observingSince = Long.MIN_VALUE
+        }
+        if (observingSince == Long.MIN_VALUE) observingSince = SystemClock.elapsedRealtime()
         val after = maxOf(queryAfter, now - LOOKBACK_MS, Pause.startedAt(this))
         if (after > now) {
             stopMonitoring()
@@ -194,7 +245,7 @@ class PauseForegroundMonitor : Service() {
         val paymentForeground = packages.paymentForegroundAt(now)
         paymentCheckedAt = SystemClock.elapsedRealtime()
         paymentEvidenceAt = if (paymentForeground) paymentCheckedAt else Long.MIN_VALUE
-        Pause.onObservedForeground(this, checkedToken, packages.foregroundAt(now), paymentForeground)
+        Pause.onObservedForeground(this, checkedToken, packages.foregroundAt(now), paymentForeground, settled())
         if (eligible()) handler.postDelayed(poll, POLL_MS) else stopMonitoring()
     }
 
@@ -226,6 +277,7 @@ class PauseForegroundMonitor : Service() {
         stopping = true
         token = null
         paymentEvidenceAt = Long.MIN_VALUE
+        observingSince = Long.MIN_VALUE
         if (active === this) active = null
         handler.removeCallbacksAndMessages(null)
         val finish = Runnable {
@@ -291,11 +343,18 @@ class PauseForegroundMonitor : Service() {
             }.getOrDefault(false)
         }
 
+        /**
+         * The timer should wait: a selected app was seen in front by a fresh query, or observation
+         * has just (re)started, for example on unlock, and has not had a full poll to see a
+         * payment app return to the front. The second case is bounded to two polls.
+         */
         internal fun paymentIsKnown(context: Context): Boolean {
             val monitor = active ?: return false
             val now = SystemClock.elapsedRealtime()
-            return allowed(context) && monitor.token == Pause.automaticToken(context) &&
-                now - monitor.paymentEvidenceAt in 0..POLL_MS * 2 && now - monitor.paymentCheckedAt in 0..POLL_MS * 2
+            if (!allowed(context) || monitor.token != Pause.automaticToken(context)) return false
+            val since = monitor.observingSince
+            val settling = since != Long.MIN_VALUE && now - since in 0..POLL_MS * 2 && !monitor.settled()
+            return settling || now - monitor.paymentEvidenceAt in 0..POLL_MS * 2 && now - monitor.paymentCheckedAt in 0..POLL_MS * 2
         }
 
         internal fun stop(context: Context) {

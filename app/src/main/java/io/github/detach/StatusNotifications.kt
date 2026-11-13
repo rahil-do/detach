@@ -13,6 +13,10 @@ object StatusNotifications {
     private const val OPEN_REQUEST = 7100
     private const val PAUSE_REQUEST = 7101
     private const val LEGACY_REMINDER_ID = 7002
+    internal const val PAY_HINT =
+        "Paying from a checkout? Pause first, or select the app you pay from in Detach, so the UPI app opens with Detach already off."
+    internal const val RESTART_HINT =
+        "If Google Pay still says an accessibility app is on, restart your phone once. Detach stays paused through the restart until you resume it in Detach."
 
     fun refresh(context: Context) {
         val app = context.applicationContext
@@ -50,8 +54,14 @@ object StatusNotifications {
             !paused && breather > 0L -> "Selected features available for up to ${(breather + 59_999L) / 60_000L} min · usual limits return automatically"
             !paused -> "On-device protection · you're in control"
             expired -> "Timer is due. If protection has not resumed, open Detach."
-            Pause.canSelfEnable(app) -> "Automatic resume after ${Pause.untilText(app)} · open Detach to resume sooner"
+            Pause.resumesAutomatically(app) -> "Automatic resume after ${Pause.untilText(app)} · open Detach to resume sooner"
+            Pause.canSelfEnable(app) -> "Reminder at ${Pause.untilText(app)} · open Detach and tap Resume"
             else -> "Reminder at ${Pause.untilText(app)} · automatic resume needs optional USB setup"
+        }
+        val details = when {
+            paused -> "$text\n\n$RESTART_HINT"
+            breather > 0L -> text
+            else -> "$text\n\n$PAY_HINT"
         }
         val publicVersion = Notification.Builder(app, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
@@ -65,7 +75,7 @@ object StatusNotifications {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setStyle(Notification.BigTextStyle().bigText(details))
             .setContentIntent(open)
             .setPublicVersion(publicVersion)
             .setLocalOnly(true)

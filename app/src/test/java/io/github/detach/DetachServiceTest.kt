@@ -1,6 +1,9 @@
 package io.github.detach
 
 import android.accessibilityservice.AccessibilityService
+import android.app.AlarmManager
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.Context
 import android.os.Handler
 import android.os.HandlerThread
@@ -19,25 +22,51 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowAccessibilityService
 import org.robolectric.shadows.ShadowLog
+import java.time.Duration
 
 @Implements(AccessibilityService::class)
 class ForegroundServiceShadow : ShadowAccessibilityService() {
     companion object {
         var activeRoot: AccessibilityNodeInfo? = null
         var disabled = false
+        var rootReads = 0
+        /** What had happened when the service switched itself off. */
+        var pendingAtDisable = false
+        var alarmsAtDisable = -1
+        var notifiedAtDisable = false
+
+        fun reset(root: AccessibilityNodeInfo? = null) {
+            activeRoot = root
+            disabled = false
+            rootReads = 0
+            pendingAtDisable = false
+            alarmsAtDisable = -1
+            notifiedAtDisable = false
+        }
     }
 
     @Implementation
-    protected fun getRootInActiveWindow(): AccessibilityNodeInfo? = activeRoot
+    protected fun getRootInActiveWindow(): AccessibilityNodeInfo? {
+        rootReads++
+        return activeRoot
+    }
 
     @Implementation
-    protected fun disableSelf() { disabled = true }
+    protected fun disableSelf() {
+        val app = RuntimeEnvironment.getApplication()
+        pendingAtDisable = Pause.isPending(app)
+        alarmsAtDisable = shadowOf(app.getSystemService(AlarmManager::class.java)).scheduledAlarms.size
+        notifiedAtDisable = shadowOf(app.getSystemService(NotificationManager::class.java)).getNotification(Pause.NOTIFICATION_ID)
+            ?.extras?.getString(Notification.EXTRA_TITLE) == "Protection paused"
+        disabled = true
+    }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -47,8 +76,7 @@ class DetachServiceTest {
     private lateinit var cover: FeedCover
 
     @Before fun setup() {
-        ForegroundServiceShadow.activeRoot = null
-        ForegroundServiceShadow.disabled = false
+        ForegroundServiceShadow.reset()
         service = Robolectric.buildService(DetachService::class.java).create().get()
         val settings = Settings(service)
         val health = Health(service)
@@ -126,6 +154,99 @@ class DetachServiceTest {
         event("com.phonepe.app")
         assertFalse(ForegroundServiceShadow.disabled)
         assertFalse(Pause.isPending(service))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertFalse(ForegroundServiceShadow.disabled)
+        assertFalse(Pause.isPending(service))
+    }
+
+    @Test fun `opening a selected checkout app pauses before it can launch a UPI app`() {
+        val checkout = "com.example.checkout"
+        Settings(service).paymentPackages = Targets.PAYMENT_DEFAULTS + checkout
+        assertTrue(checkout in Settings(service).eventPackages())
+        foreground(Screen(checkout).node(text = "Order summary"))
+        Inspector.tracing = true
+        ShadowLog.clear()
+        event(checkout)
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(Pause.isPending(service))
+        assertEquals(checkout, Pause.startingPaymentPackage(service))
+        assertFalse(ShadowLog.getLogsForTag(Inspector.TAG).any { it.msg.startsWith("EV ") })
+    }
+
+    @Test fun `a background selected app event never pauses while any other app is in front`() {
+        val shop = "com.example.selected.shop"
+        Settings(service).paymentPackages = Targets.PAYMENT_DEFAULTS + shop
+        // Home screen, an unselected app, and Detach itself straight after the owner taps Resume.
+        for (front in listOf("com.example.launcher", "com.example.unselected.app", service.packageName)) {
+            foreground(Screen(front))
+            event(shop)
+            event("com.google.android.apps.nbu.paisa.user")
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+            assertFalse(front, ForegroundServiceShadow.disabled)
+            assertFalse(front, Pause.isPending(service))
+        }
+    }
+
+    @Test fun `a payment event behind the launching checkout pauses once the payment window takes focus`() {
+        val gpay = "com.google.android.apps.nbu.paisa.user"
+        foreground(Screen("com.example.unselected.shop").node(text = "Checkout"))
+        event(gpay)
+        assertFalse(ForegroundServiceShadow.disabled)
+        foreground(Screen(gpay))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(DetachService.FOREGROUND_CHECKS_MS[0]))
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertEquals(gpay, Pause.startingPaymentPackage(service))
+        assertTrue(Pause.startingPaymentWasInFront(service))
+    }
+
+    @Test fun `a selected payment event pauses before Android reports any active window`() {
+        ForegroundServiceShadow.activeRoot = null
+        event("com.phonepe.app", AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(Pause.isPending(service))
+        // Only an event: the optional monitor must not treat the app as confirmed in front.
+        assertEquals("com.phonepe.app", Pause.startingPaymentPackage(service))
+        assertFalse(Pause.startingPaymentWasInFront(service))
+    }
+
+    @Test fun `a pause from the selected app's own window is recorded as in front`() {
+        foreground(Screen("com.phonepe.app"))
+        event("com.phonepe.app")
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(Pause.startingPaymentWasInFront(service))
+    }
+
+    @Test fun `a selected payment event behind a social app pauses once its window takes focus`() {
+        foreground(Screen(Targets.INSTAGRAM))
+        event("com.phonepe.app")
+        assertFalse(ForegroundServiceShadow.disabled)
+        foreground(Screen("com.phonepe.app"))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(DetachService.FOREGROUND_CHECKS_MS[1]))
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(Pause.isPending(service))
+    }
+
+    @Test fun `focus re-checks are bounded to about a second`() {
+        foreground(Screen(Targets.INSTAGRAM))
+        event("com.phonepe.app")
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(DetachService.FOREGROUND_CHECKS_MS.last() + 1))
+        foreground(Screen("com.phonepe.app"))
+        val reads = ForegroundServiceShadow.rootReads
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(5))
+        assertEquals(reads, ForegroundServiceShadow.rootReads)
+        assertFalse(ForegroundServiceShadow.disabled)
+    }
+
+    @Test fun `a payment event reads the active window once and disables before alarm and notification work`() {
+        foreground(Screen("com.phonepe.app"))
+        ForegroundServiceShadow.rootReads = 0
+        event("com.phonepe.app")
+        assertEquals(1, ForegroundServiceShadow.rootReads)
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(ForegroundServiceShadow.pendingAtDisable)
+        assertEquals(0, ForegroundServiceShadow.alarmsAtDisable)
+        assertFalse(ForegroundServiceShadow.notifiedAtDisable)
+        assertEquals(1, shadowOf(service.getSystemService(AlarmManager::class.java)).scheduledAlarms.size)
     }
 
     @Test fun `a queued cover cannot appear after the user changes apps`() {
@@ -308,8 +429,7 @@ class DetachServiceConnectionTest {
     private lateinit var service: DetachService
 
     @Before fun setup() {
-        ForegroundServiceShadow.activeRoot = AccessibilityNodeInfo.obtain().apply { packageName = Targets.INSTAGRAM }
-        ForegroundServiceShadow.disabled = false
+        ForegroundServiceShadow.reset(AccessibilityNodeInfo.obtain().apply { packageName = Targets.INSTAGRAM })
         service = Robolectric.buildService(DetachService::class.java).create().get()
     }
 
@@ -442,5 +562,64 @@ class DetachServiceConnectionTest {
         assertTrue(Pause.until(service) >= until)
         assertUninitialized()
         assertFalse(Pause.consumeResumeAuthorization(service))
+    }
+
+    private fun idleWorker() {
+        (value("thread") as? HandlerThread)?.looper?.let { shadowOf(it).idle() }
+    }
+
+    private fun root(packageName: String?) {
+        ForegroundServiceShadow.activeRoot = packageName?.let { name -> AccessibilityNodeInfo.obtain().apply { this.packageName = name } }
+    }
+
+    @Test fun `startup re-checks pause for a selected app whose window was not available at binding`() {
+        root(null)
+        connect()
+        idleWorker()
+        assertTrue(DetachService.isRunning)
+        assertFalse(ForegroundServiceShadow.disabled)
+        root("com.phonepe.app")
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(Pause.isPending(service))
+        assertFalse(DetachService.isRunning)
+    }
+
+    @Test fun `startup re-checks stop after about a second and never pause a social app`() {
+        root(Targets.INSTAGRAM)
+        connect()
+        idleWorker()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(DetachService.FOREGROUND_CHECKS_MS.last() + 1))
+        idleWorker()
+        assertFalse(ForegroundServiceShadow.disabled)
+        root("com.phonepe.app")
+        val reads = ForegroundServiceShadow.rootReads
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(5))
+        assertFalse(ForegroundServiceShadow.disabled)
+        assertTrue(ForegroundServiceShadow.rootReads - reads <= 1)
+        assertTrue(DetachService.isRunning)
+    }
+
+    @Test fun `a timer resume while the same selected app is still open pauses again at once`() {
+        val bank = "com.phonepe.app"
+        shadowOf(service.application).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        android.provider.Settings.Secure.putString(service.contentResolver,
+            android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "com.example/.Other")
+        Settings(service).pauseMinutes = 1
+        assertTrue(Pause.begin(service, bank))
+        val stored = service.getSharedPreferences("pause", Context.MODE_PRIVATE)
+        stored.edit().putLong("started", stored.getLong("started", 0L) - 60_001L)
+            .putLong("until", stored.getLong("until", 0L) - 60_001L).commit()
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(Duration.ofMillis(60_001L))
+        Pause.onTimer(service)
+        val previous = Pause.startedAt(service)
+        root(bank)
+        connect()
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(Pause.isPending(service))
+        assertEquals(bank, Pause.startingPaymentPackage(service))
+        assertTrue(Pause.startedAt(service) >= previous)
+        assertFalse(Pause.timerDue(service))
+        assertUninitialized()
     }
 }

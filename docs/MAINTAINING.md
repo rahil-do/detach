@@ -44,7 +44,9 @@ Enable Detach explicitly in Android Accessibility settings. During a pending pay
 | `OverlaySnapshotTest`, `InspectorTest` | Foreign-package/password subtrees, debug-only social inspection and release silence |
 | `StatusNotificationsTest`, `HealthNotificationsTest` | Private/local immutable notification actions, deduplication and recovery |
 | `UiTest` | Authentication, disclosures/scroll state, diagnostics routing, reduced motion and accessible controls |
-| `ManifestTest` | No network permission, only the launcher screen exported, backup off, the accessibility package list matches the code |
+| `ManifestTest` | No network permission, only the launcher screen (and the System UI-bound tile) exported, backup off, the accessibility package list matches the code |
+| `PauseTileServiceTest`, `OtherAccessibilityAppsTest` | Tile opens only the authenticated confirmation; other-service warning names non-system apps in light and dark |
+| `PauseActivityTest` | "Pause and open" offers only selected launchable apps, needs the password, and opens the app only after Detach leaves the enabled services (never while still listed) |
 
 When a real-world bug is fixed, add a test that reproduces the screen that caused it (dump it with the inspector, see below). The tests check the rules, not the phone: overlays, fingerprint prompts and the pause itself still need the smoke test on a device.
 
@@ -92,8 +94,13 @@ Then update the fingerprint in `SECURITY.md`.
 - [ ] Fresh start of Instagram (force-close it first): the feed is covered without switching tabs
 - [ ] Pause: confirmation → no protection overlay/worker. Timer-only starts no monitor; same-boot timer auto-resumes only with the secure-settings grant. Reboot/update revoke automatic authority; app/notification opens never renew it
 - [ ] Explicit Resume works: with the optional existing secure-settings grant it reenables directly; without it, completing Accessibility within three minutes works and a stale authorization is rejected
-- [ ] Auto-pause: selected payment package foreground disables the service before content inspection; background events do not pause a different foreground app. Use a consented test app or a test account, never record real payment content
-- [ ] Pending-pause reconnect fails closed without authority; selected-payment foreground rejects explicit Resume except the documented bounded original-bank timer suppression
+- [ ] Auto-pause: selected payment package foreground disables the service before content inspection; a selected app's background events never pause while any other app (home screen, an unselected app, Detach after Resume, Instagram/YouTube/protected Settings) is the active window. Use a consented test app or a test account, never record real payment content
+- [ ] Checkout flow: with the app you pay from selected, opening it removes `io.github.detach` from `adb shell settings get secure enabled_accessibility_services` before the UPI app is launched; without it selected, note whether the UPI app's first event reaches Detach when launched inside the checkout's task
+- [ ] Quick Settings tile: tap asks for fingerprint/password, unlocks first on the lock screen, and opens Detach while paused
+- [ ] Pause and open: from the tile, "Pause and open Google Pay" leaves Google Pay closed until `adb shell settings get secure enabled_accessibility_services` no longer contains `io.github.detach`; Google Pay then opens without the accessibility error (after one restart if it had already latched the block)
+- [ ] Locked timer: with the USB grant, leave a selected app open, lock the phone past the timer, unlock: Detach stays paused (with app detection) or resumes only after unlock (timer-only)
+- [ ] Pending-pause reconnect fails closed without authority; selected-app foreground rejects explicit Resume and timer resumes (pauses again at once, no exemption)
+- [ ] Payments section lists other enabled non-system accessibility apps by label and never changes them
 - [ ] Reminder duration: − and + change it, and ask for fingerprint or password when a password is set
 - [ ] Auto-pause disclosure explains the password bypass and timer-only banking limitation; app monitoring defaults off, requires disclosure+both grants and stops on revoke/opt-out/resume/off-screen polling
 - [ ] Breather always authenticates start/extension, restores all restrictions on expiry/early end, survives no process/boot restart, and never relaxes Guard or payment priority

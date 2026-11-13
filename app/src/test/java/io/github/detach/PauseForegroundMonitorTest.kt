@@ -91,8 +91,8 @@ class PauseForegroundMonitorTest {
         AppOpsManager.OPSTR_GET_USAGE_STATS, context.applicationInfo.uid, context.packageName, mode,
     )
 
-    private fun start(): Int {
-        assertTrue(Pause.begin(context, bank))
+    private fun start(inFront: Boolean = false): Int {
+        assertTrue(Pause.begin(context, bank, inFront))
         val intent = shadowOf(context).nextStartedService!!
         assertEquals(ComponentName(context, PauseForegroundMonitor::class.java), intent.component)
         controller = Robolectric.buildService(PauseForegroundMonitor::class.java).create()
@@ -310,9 +310,131 @@ class PauseForegroundMonitorTest {
         packages.accept("com.example.unrelated", UsageEvents.Event.USER_INTERACTION, setOf(bank), 10_002L)
         assertEquals(Targets.YOUTUBE, packages.foregroundAt(10_002L))
         assertTrue(packages.paymentForegroundAt(10_002L))
-        assertFalse(packages.paymentForegroundAt(10_001L + ForegroundPackages.STATE_MAX_MS))
+        assertFalse(packages.paymentForegroundAt(10_001L + ForegroundPackages.PAYMENT_HOLD_MS))
         assertNull(packages.foregroundAt(10_002L + ForegroundPackages.STATE_MAX_MS))
         packages.clear()
         assertNull(packages.foregroundAt(10_002L))
+    }
+
+    @Test fun `a user sitting on one payment screen keeps payment evidence until the app leaves`() {
+        val checkout = "com.example.checkout"
+        val selected = setOf(bank, checkout)
+        val packages = ForegroundPackages()
+        packages.accept(checkout, UsageEvents.Event.MOVE_TO_FOREGROUND, selected, 10_000L)
+        packages.accept(checkout, UsageEvents.Event.MOVE_TO_BACKGROUND, selected, 20_000L)
+        packages.accept(bank, UsageEvents.Event.MOVE_TO_FOREGROUND, selected, 20_001L)
+        // A PIN screen held well past the old 30 second hint is still a payment in progress.
+        assertTrue(packages.paymentForegroundAt(20_001L + ForegroundPackages.STATE_MAX_MS * 4))
+        packages.accept(bank, UsageEvents.Event.MOVE_TO_BACKGROUND, selected, 200_000L)
+        assertFalse(packages.paymentForegroundAt(200_001L))
+    }
+
+    @Test fun `continuous polling keeps a long payment screen known so the timer defers`() {
+        Settings(context).pauseMinutes = 1
+        start()
+        event(bank, UsageEvents.Event.MOVE_TO_FOREGROUND)
+        shadowOf(worker).idle()
+        val packages = PauseForegroundMonitor::class.java.getDeclaredField("packages").apply { isAccessible = true }.get(service) as ForegroundPackages
+        // Re-date the only foreground event 45 seconds into the past: no newer event arrives.
+        val payments = ForegroundPackages::class.java.getDeclaredField("payments").apply { isAccessible = true }
+            .get(packages) as MutableMap<String, Long>
+        payments[bank] = System.currentTimeMillis() - 45_000L
+        idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS))
+        assertTrue(state(), PauseForegroundMonitor.paymentIsKnown(context))
+        // A minute of uninterrupted polling with no new event: the timer is now due.
+        repeat(29) { idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS)) }
+        idleWorker(Duration.ofMillis(1))
+        assertTrue(Pause.timerDue(context))
+        assertTrue(state(), PauseForegroundMonitor.paymentIsKnown(context))
+        Pause.onTimer(context)
+        assertFalse(Pause.consumeResumeAuthorization(context))
+        assertTrue(Pause.isPending(context))
+    }
+
+    @Test fun `a starting app seen only in an event is a short hint while a confirmed one is held`() {
+        val packages = ForegroundPackages()
+        packages.seed(bank, setOf(bank), 10_000L, inFront = false)
+        assertTrue(packages.paymentForegroundAt(10_000L + ForegroundPackages.STATE_MAX_MS))
+        assertFalse(packages.paymentForegroundAt(10_001L + ForegroundPackages.STATE_MAX_MS))
+        packages.seed(bank, setOf(bank), 10_000L, inFront = true)
+        assertTrue(packages.paymentForegroundAt(10_000L + ForegroundPackages.STATE_MAX_MS * 4))
+        packages.accept(bank, UsageEvents.Event.MOVE_TO_BACKGROUND, setOf(bank), 20_000L)
+        assertFalse(packages.paymentForegroundAt(20_001L))
+        // A real foreground event upgrades a short hint to observed evidence.
+        packages.seed(bank, setOf(bank), 30_000L, inFront = false)
+        packages.accept(bank, UsageEvents.Event.MOVE_TO_FOREGROUND, setOf(bank), 31_000L)
+        assertTrue(packages.paymentForegroundAt(31_000L + ForegroundPackages.STATE_MAX_MS * 4))
+        packages.seed("com.example.unselected", setOf(bank), 40_000L, inFront = true)
+        packages.accept(bank, UsageEvents.Event.MOVE_TO_BACKGROUND, setOf(bank), 40_001L)
+        assertFalse(packages.paymentForegroundAt(40_002L))
+    }
+
+    /** An event newer than the last query, strictly before the next one (the wall clock is real here). */
+    private fun eventSinceLastQuery(packageName: String, eventType: Int) {
+        event(packageName, eventType, 0L)
+        Thread.sleep(2)
+    }
+
+    private fun socialAfterSeedExpiry(): Boolean {
+        shadowOf(worker).idle()
+        // Re-date the starting app's evidence past the 30 second hint: no event for it arrives.
+        val packages = PauseForegroundMonitor::class.java.getDeclaredField("packages").apply { isAccessible = true }.get(service) as ForegroundPackages
+        for (name in listOf("payments", "hints")) {
+            @Suppress("UNCHECKED_CAST")
+            val held = ForegroundPackages::class.java.getDeclaredField(name).apply { isAccessible = true }.get(packages) as MutableMap<String, Long>
+            held.replaceAll { _, at -> at - ForegroundPackages.STATE_MAX_MS - 1_000L }
+        }
+        eventSinceLastQuery(Targets.INSTAGRAM, UsageEvents.Event.MOVE_TO_FOREGROUND)
+        idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS))
+        return Pause.consumeResumeAuthorization(context)
+    }
+
+    @Test fun `a pause from a selected app event alone does not block the social resume for minutes`() {
+        start(inFront = false)
+        assertTrue(state(), socialAfterSeedExpiry())
+    }
+
+    @Test fun `a pause from the selected app's own window keeps it in front until it leaves`() {
+        start(inFront = true)
+        assertFalse(state(), socialAfterSeedExpiry())
+        assertTrue(state(), PauseForegroundMonitor.paymentIsKnown(context))
+    }
+
+    private fun lockThenUnlockWithTimerDue() {
+        Settings(context).pauseMinutes = 1
+        start()
+        shadowOf(worker).idle()
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        shadowOf(Looper.getMainLooper()).idle()
+        idleWorker(Duration.ofMillis(60_001L))
+        assertTrue(Pause.timerDue(context))
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(false)
+        context.sendBroadcast(Intent(Intent.ACTION_USER_PRESENT))
+        shadowOf(Looper.getMainLooper()).idle()
+        shadowOf(worker).idle()
+    }
+
+    @Test fun `after an unlock a due timer waits a poll for the payment app to come back to the front`() {
+        lockThenUnlockWithTimerDue()
+        // The first check after unlock can run before the payment app's resume is reported.
+        assertFalse(state(), Pause.consumeResumeAuthorization(context))
+        assertTrue(state(), PauseForegroundMonitor.paymentIsKnown(context))
+        Pause.onTimer(context)
+        assertFalse(Pause.consumeResumeAuthorization(context))
+        eventSinceLastQuery(bank, UsageEvents.Event.MOVE_TO_FOREGROUND)
+        idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS))
+        assertFalse(state(), Pause.consumeResumeAuthorization(context))
+        assertTrue(state(), PauseForegroundMonitor.paymentIsKnown(context))
+        assertTrue(Pause.isPending(context))
+    }
+
+    @Test fun `after an unlock with no payment app in front a due timer resumes after one poll`() {
+        lockThenUnlockWithTimerDue()
+        assertFalse(state(), Pause.consumeResumeAuthorization(context))
+        idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS))
+        assertTrue(state(), Pause.consumeResumeAuthorization(context))
     }
 }

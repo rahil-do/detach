@@ -91,7 +91,7 @@ class UiTest {
         Lock(context).set("protected")
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         disclosure(activity, "payment-options").performClick()
-        button(activity, "Choose payment & banking apps").performClick()
+        button(activity, "Choose UPI, bank & checkout apps").performClick()
         var dialog = ShadowAlertDialog.getLatestAlertDialog()
         assertEquals("Enter password", shadowOf(dialog).title.toString())
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()

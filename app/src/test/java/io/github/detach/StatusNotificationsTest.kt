@@ -119,6 +119,22 @@ class StatusNotificationsTest {
         assertTrue(shadowOf(notification.contentIntent).isImmutable)
     }
 
+    @Test fun `paused status explains the Google Pay restart and running status says to pause first`() {
+        pause()
+        StatusNotifications.refresh(context)
+        val paused = status().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+        assertTrue(paused.contains("restart your phone once"))
+        assertTrue(paused.contains("stays paused through the restart"))
+        context.getSharedPreferences("pause", Context.MODE_PRIVATE).edit().clear().commit()
+        setRunning(true)
+        Settings(context).pauseNotification = true
+        StatusNotifications.refresh(context)
+        val running = status().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+        assertTrue(running.contains("Pause first"))
+        assertTrue(running.contains("app you pay from"))
+        assertEquals("On-device protection · you're in control", status().extras.getString(Notification.EXTRA_TEXT))
+    }
+
     @Test fun `a pending payment pause wins over a service that is still disconnecting`() {
         setRunning(true)
         Settings(context).pauseNotification = true

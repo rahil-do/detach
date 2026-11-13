@@ -220,7 +220,8 @@ class MainActivity : Activity() {
         val detail = when {
             paused && serviceEnabled() -> "Resume requested. Waiting for Android to reconnect; protection is not confirmed yet."
             paused && Pause.isExpired(this) -> "The pause timer is due. If automatic resume is unavailable or delayed, use Resume protection."
-            paused && Pause.canSelfEnable(this) -> "Automatic resume after ${Pause.untilText(this)}. You can resume sooner below."
+            paused && Pause.resumesAutomatically(this) -> "Automatic resume after ${Pause.untilText(this)}. You can resume sooner below."
+            paused && Pause.canSelfEnable(this) -> "Reminder at ${Pause.untilText(this)}. After a restart the timer can't resume protection; tap Resume protection when you've finished paying."
             paused -> "Reminder at ${Pause.untilText(this)}. Automatic resume needs the optional USB setup below."
             active && Breather.remainingMs(this) > 0 -> "Your breather is on. Instagram and YouTube are unblocked until it ends."
             active -> "Your app choices below are being applied."
@@ -312,7 +313,16 @@ class MainActivity : Activity() {
     private fun payments(paused: Boolean) = column().apply {
         addView(ui.section("Payments"))
         addView(ui.text("Switch off. Pay. Resume.", 19f, strong = true))
-        addView(ui.note("A payment pause fully disables Accessibility and removes overlays. The timer resumes protection with the optional USB grant; otherwise it reminds you to resume in Settings. App detection is a separate opt-in below.").apply { setPadding(0, ui.dp(8), 0, ui.dp(14)) })
+        addView(ui.note("Google Pay and other UPI or bank apps can refuse to pay while an accessibility app from outside the Play Store is on, even though Detach never reads them. A payment pause fully switches Detach's accessibility off and removes overlays. The timer resumes protection with the optional USB grant; otherwise it reminds you to resume in Settings.").apply { setPadding(0, ui.dp(8), 0, ui.dp(14)) })
+        addView(column().apply {
+            tag = "payment-setup"
+            background = ui.shape()
+            setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
+            addView(ui.text("Pause before the payment app opens", 15f, strong = true))
+            addView(ui.note("Payment apps can check as they start, before Detach can react. Select the apps you pay from, for example investing or shopping apps, under Payment preferences: Detach is then already off when they open Google Pay or another UPI app. To open a UPI or bank app yourself, use Pause and open from the Quick Settings tile or the status notification: Detach opens it only once Android shows Detach as off. Opening a UPI app straight from the home screen is noticed only after it has started, which can be too late.").apply { setPadding(0, ui.dp(6), 0, 0) })
+            addView(ui.note("If Google Pay still says an accessibility app is on, restart your phone once. Detach stays paused through the restart until you tap Resume protection here.").apply { setPadding(0, ui.dp(8), 0, 0) })
+        })
+        addView(ui.space(12))
         if (!paused && DetachService.isRunning) addView(ui.secondary("Pause protection for payment") {
             Auth.confirm(this@MainActivity, "Pause for payments") {
                 toast(if (DetachService.pauseForPayments()) "Protection paused. Your payment timer is set."
@@ -320,15 +330,23 @@ class MainActivity : Activity() {
                 render()
             }
         })
+        val others = OtherAccessibilityApps.labels(this@MainActivity)
+        if (others.isNotEmpty()) addView(column().apply {
+            tag = "other-accessibility"
+            setPadding(0, ui.dp(10), 0, 0)
+            addView(ui.note("Also on in Accessibility: ${others.joinToString()}. Payment apps may still refuse while another accessibility app is on; Detach can only switch itself off."))
+            addView(ui.quiet("Open Accessibility settings") { open(Intent(SysSettings.ACTION_ACCESSIBILITY_SETTINGS)) })
+        })
         addView(disclosure("payment-options", "Payment preferences") {
-            addView(optionRow("Auto-pause for payment apps", "Checks selected package names, never screen content", settings.autoPausePayments) {
+            addView(optionRow("Auto-pause for payment apps", "UPI, bank and the apps you pay from. Checks package names, never screen content", settings.autoPausePayments) {
                 settings.autoPausePayments = it
             })
-            addView(ui.note("Opening a selected app bypasses your password and turns all protection off during the pause. Instagram, YouTube and uninstalling Detach are unrestricted until protection resumes. Only selected apps are detected; embedded payments are not.").apply {
+            addView(ui.note("Opening a selected app bypasses your password and turns all protection off during the pause. Detach pauses when a selected app's window is in front, or on its first event while Android reports no window in front yet; events from a selected app in the background never pause it. Instagram, YouTube and uninstalling Detach are unrestricted until protection resumes. Only selected apps are detected; embedded payments are not, so also select the app you pay from. ${resumeWhileSelectedNote()}".trim()).apply {
+                tag = "payment-auto-note"
                 setPadding(0, 0, 0, ui.dp(12))
             })
-            addView(ui.secondary("Choose payment & banking apps") { requirePassword { choosePaymentApps() } })
-            addView(ui.note("${settings.paymentPackages.size} apps selected. Four UPI apps are included by default; select any other banks you use.").apply { setPadding(0, ui.dp(8), 0, ui.dp(8)) })
+            addView(ui.secondary("Choose UPI, bank & checkout apps") { requirePassword { choosePaymentApps() } })
+            addView(ui.note("${settings.paymentPackages.size} apps selected. Google Pay, PhonePe, Paytm and BHIM are included by default. Add your bank apps and the apps you pay from, e.g. investing or shopping apps.").apply { setPadding(0, ui.dp(8), 0, ui.dp(8)) })
             addView(reminderRow())
             addView(optionRow("Resume when Instagram or YouTube opens", "Optional local app detection during payment pauses", settings.resumeOnSocialForeground) { enabled ->
                 if (enabled) confirmForegroundResume() else {
@@ -345,6 +363,7 @@ class MainActivity : Activity() {
                 settings.pauseNotification = it
                 Pause.refreshNotification(this@MainActivity)
             })
+            if (Build.VERSION.SDK_INT >= 33) addView(ui.quiet("Add Quick Settings tile") { addPauseTile() })
             if (!Pause.canSelfEnable(this@MainActivity)) addView(disclosure("usb", "Enable automatic Resume over USB") {
                 addView(ui.note("This optional grant lets the timer, your explicit Resume tap, and opt-in app detection re-enable Detach. Without it, Android requires you to turn Detach on in Accessibility settings. Timer-only mode cannot tell whether you are still banking; choose enough time."))
                 addView(ui.note(Pause.GRANT_COMMAND).apply {
@@ -355,6 +374,32 @@ class MainActivity : Activity() {
             })
         })
         addView(ui.hairline())
+    }
+
+    /**
+     * Only app detection can see that a selected app is still in front. In timer-only mode the
+     * timer turns Detach back on when it is due (it waits only while the phone is locked), so the
+     * copy must not promise that a selected app keeps protection paused.
+     */
+    private fun resumeWhileSelectedNote(): String = when {
+        !Pause.canSelfEnable(this) -> ""
+        settings.resumeOnSocialForeground && PauseForegroundMonitor.hasUsageAccess(this) ->
+            "With app detection, the timer waits while a selected app is seen in front."
+        else -> "Timer-only mode can't see which app is in front: when the timer is due it turns Detach back on even during a long checkout or PIN screen, and the payment app may notice before Detach pauses again. Choose enough time, or turn on app detection."
+    }
+
+    /** Asks System UI to offer the "Pause for payment" tile (Android 13+); the owner decides. */
+    private fun addPauseTile() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val asked = runCatching {
+            getSystemService(android.app.StatusBarManager::class.java).requestAddTileService(
+                android.content.ComponentName(this, PauseTileService::class.java),
+                PauseTileService.LABEL,
+                android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_pause),
+                mainExecutor,
+            ) { }
+        }.isSuccess
+        if (!asked) toast("Edit Quick Settings and drag in Detach's Pause for payment tile")
     }
 
     private fun reminderRow() = LinearLayout(this).apply {

@@ -104,10 +104,13 @@ class DetachService : AccessibilityService() {
             return
         }
         settings = Settings(this)
+        // A timer or monitor resume can land while a selected app is still in front: pause again
+        // straight away rather than start protecting it.
         val startupPackage = foreground()
-        if (Pause.shouldAutoPausePayment(this, startupPackage) && Pause.begin(this, startupPackage)) {
+        if (Pause.shouldAutoPausePayment(this, startupPackage) && Pause.record(this, startupPackage, paymentInFront = true)) {
             stopProtection()
             disableSelf()
+            Pause.afterRecorded(this)
             return
         }
         health = Health(this)
@@ -138,21 +141,29 @@ class DetachService : AccessibilityService() {
         // Running again: any pause is over, and the "on" notification goes (back) up.
         Pause.onServiceStarted(this)
         refreshBreather()
+        // Right after binding the active window is often not available yet, so the check above
+        // can miss a selected app that is already open. Look again, by package name only.
+        scheduleForegroundChecks()
     }
 
     /**
      * "Pause for payments": records the pause, schedules the reminder, swaps the notification,
      * takes down the overlays and switches this service off. Main thread only.
+     * [inFront]: [paymentPackage] was read from the active window (see [Pause.record]).
      */
-    private fun pauseNow(paymentPackage: String? = null): Boolean {
+    private fun pauseNow(paymentPackage: String? = null, inFront: Boolean = false): Boolean {
         if (pausing) return false
-        if (!Pause.begin(this, paymentPackage)) {
+        // Durable marker first (fail closed), then off as fast as possible: a payment app may be
+        // checking the enabled accessibility services while it starts.
+        if (!Pause.record(this, paymentPackage, inFront)) {
             if (paymentPackage != null) onInterrupt()
             return false
         }
         stopProtection()
-        if (::health.isInitialized) health.lastAction("paused for payments")
         disableSelf()
+        // Detach is already out of the enabled list; alarms and notifications can follow.
+        Pause.afterRecorded(this)
+        if (::health.isInitialized) health.lastAction("paused for payments")
         return true
     }
 
@@ -205,8 +216,13 @@ class DetachService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val pkg = event.packageName?.toString() ?: return
         if (pausing || !::worker.isInitialized) return
+        // One active-window read per event; its package is passed on rather than read again.
         val activePackage = foreground()
-        if (pauseIfPayment(activePackage)) return
+        if (pauseIfPayment(activePackage, confirmed = true)) return
+        if (pkg != activePackage && Pause.shouldAutoPausePayment(this, pkg)) {
+            onSelectedAppEvent(pkg, activePackage)
+            return
+        }
         if (pkg in Targets.SYSTEM_UI) {
             if (activePackage == pkg) {
                 coverRevision.incrementAndGet()
@@ -257,16 +273,48 @@ class DetachService : AccessibilityService() {
     /** Package of the focused window. Only the name is read, never its content. */
     private fun foreground(): String? = rootInActiveWindow?.packageName?.toString()
 
-    private fun pauseIfPayment(pkg: String?): Boolean {
+    /**
+     * Pauses if [pkg] is a selected app in front. [confirmed]: [pkg] was just read from the
+     * active window on the main thread, so it isn't read a second time.
+     */
+    private fun pauseIfPayment(pkg: String?, confirmed: Boolean = false): Boolean {
         if (!Pause.shouldAutoPausePayment(this, pkg)) return false
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            if (foreground() == pkg) pauseNow(pkg)
+            if (confirmed || foreground() == pkg) pauseNow(pkg, inFront = true)
         } else {
             main.post {
-                if (!pausing && foreground() == pkg && Pause.shouldAutoPausePayment(this, pkg)) pauseNow(pkg)
+                if (!pausing && foreground() == pkg && Pause.shouldAutoPausePayment(this, pkg)) pauseNow(pkg, inFront = true)
             }
         }
         return true
+    }
+
+    /**
+     * A selected app sent an event but isn't the active window. Any app can send accessibility
+     * events from the background, so an event alone is not evidence that the app is in front:
+     * otherwise a selected shopping app (or an SDK inside it) could switch protection off while
+     * the owner is on the home screen, or straight after they tap Resume. Pause at once only
+     * while Android reports no active window at all, which is the brief gap while a newly
+     * launched app takes focus. Whenever another app is the active window, only re-check the
+     * active package for about a second; the pause then needs the selected app's own window.
+     * This is a late fallback either way: the dependable setups pause before the payment app
+     * starts (select the app you pay from, or "Pause and open" from the tile or notification).
+     */
+    private fun onSelectedAppEvent(pkg: String, activePackage: String?) {
+        if (activePackage == null) pauseNow(pkg) else scheduleForegroundChecks()
+    }
+
+    private val foregroundChecks = Any()
+
+    /** Main thread. Package-only re-checks of the active window, bounded to about a second. */
+    private fun scheduleForegroundChecks() {
+        if (pausing) return
+        main.removeCallbacksAndMessages(foregroundChecks)
+        for (delay in FOREGROUND_CHECKS_MS) {
+            main.postDelayed({
+                if (!pausing && pauseIfPayment(foreground(), confirmed = true)) main.removeCallbacksAndMessages(foregroundChecks)
+            }, foregroundChecks, delay)
+        }
     }
 
     /** Run an evaluation soon: right away if [immediate], otherwise at most one per [gap] ms. */
@@ -605,6 +653,9 @@ class DetachService : AccessibilityService() {
         /** While a cover/panel is up, how often to check the app is still in front. */
         const val WATCHDOG_MS = 120L
 
+        /** When to look again for a selected app that isn't the active window yet. */
+        internal val FOREGROUND_CHECKS_MS = longArrayOf(50, 150, 300, 600, 1000)
+
         /**
          * The connected service, for the rest of the app (same process) to talk to. Set in
          * onServiceConnected, cleared when Android unbinds or destroys the service.
@@ -616,10 +667,11 @@ class DetachService : AccessibilityService() {
         /**
          * Asks the running service to switch itself off for the set pause time. Call on the
          * main thread, after the user has been confirmed. False if the service isn't running.
+         * [paymentPackage]: the selected app the owner is about to open (recorded only if selected).
          */
-        fun pauseForPayments(): Boolean {
+        fun pauseForPayments(paymentPackage: String? = null): Boolean {
             val s = instance ?: return false
-            return runCatching { s.pauseNow() }.getOrDefault(false)
+            return runCatching { s.pauseNow(paymentPackage) }.getOrDefault(false)
         }
 
         fun refreshSettings() {

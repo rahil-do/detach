@@ -1,6 +1,7 @@
 package io.github.detach
 
 import android.app.AlarmManager
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -9,6 +10,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings as SysSettings
 import java.util.Date
@@ -32,6 +34,10 @@ object Pause {
     const val MAX_MS = 60 * 60_000L
     const val RESUME_AUTHORIZATION_MS = 3 * 60_000L
     internal const val AUTOMATIC_DELAY_MS = MAX_MS
+    /** How often a due timer looks again while the phone is locked. */
+    internal const val LOCKED_RETRY_MS = 30_000L
+    /** A locked phone defers the timer only while this much automatic authority is left. */
+    internal const val LOCKED_DEFER_MARGIN_MS = 20 * 60_000L
 
     /** How long the next pause will last: the owner's setting, 1 to 60 minutes. */
     fun durationMs(context: Context) = Settings(context).pauseMinutes * 60_000L
@@ -56,6 +62,10 @@ object Pause {
     private const val KEY_DURATION = "automatic_duration"
     private const val KEY_ATTEMPTED = "automatic_attempted"
     private const val KEY_PAYMENT = "payment_package"
+    /** The selected app was the active window when it started this pause (not just an event). */
+    private const val KEY_PAYMENT_IN_FRONT = "payment_in_front"
+    // Written by 0.5.0 previews to skip re-pausing over the same app after a timer resume.
+    // No longer used (see shouldAutoPausePayment); removed whenever pause state is rewritten.
     private const val KEY_SUPPRESSED_PAYMENT = "suppressed_payment"
     private const val KEY_SUPPRESSED_ELAPSED = "suppressed_elapsed"
     private const val KEY_SUPPRESSED_BOOT = "suppressed_boot"
@@ -64,6 +74,9 @@ object Pause {
 
     private fun SharedPreferences.Editor.removeResumeAuthorization(): SharedPreferences.Editor =
         remove(KEY_RESUME_AUTHORIZED_AT).remove(KEY_RESUME_AUTHORIZED_ELAPSED).remove(KEY_RESUME_BOOT_COUNT)
+
+    private fun SharedPreferences.Editor.removeLegacySuppression(): SharedPreferences.Editor =
+        remove(KEY_SUPPRESSED_PAYMENT).remove(KEY_SUPPRESSED_ELAPSED).remove(KEY_SUPPRESSED_BOOT)
 
     private fun bootCount(context: Context): Int = runCatching {
         SysSettings.Global.getInt(context.contentResolver, SysSettings.Global.BOOT_COUNT, 0)
@@ -87,38 +100,66 @@ object Pause {
     fun untilText(context: Context): String =
         android.text.format.DateFormat.getTimeFormat(context).format(Date(until(context)))
 
+    /**
+     * This pause can still switch Detach back on by itself: the USB grant is present and the
+     * pause's same-boot automatic authority is intact. After a restart it is not (the pause and
+     * its reminder remain, but resuming takes a tap on Resume in Detach).
+     */
+    fun resumesAutomatically(context: Context): Boolean = canSelfEnable(context) && automaticToken(context) != null
+
     /** True once the owner has granted WRITE_SECURE_SETTINGS over adb. */
     fun canSelfEnable(context: Context) =
         context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
 
     /**
-     * Starts a pause. Called by the running service just before it switches itself off.
-     * Records the reminder time before the service stops, then schedules one reminder alarm.
-     * A false result means callers must keep protection enabled because persistence failed.
+     * Starts a pause: [record] then [afterRecorded]. A false result means callers must keep
+     * protection enabled because persistence failed.
      */
     @Synchronized
-    fun begin(context: Context, paymentPackage: String? = null): Boolean {
+    fun begin(context: Context, paymentPackage: String? = null, paymentInFront: Boolean = false): Boolean {
+        if (!record(context, paymentPackage, paymentInFront)) return false
+        afterRecorded(context)
+        return true
+    }
+
+    /**
+     * The part of starting a pause that must happen before the service calls disableSelf():
+     * the durable pending marker (fail-closed: false means keep protection on) and the optional
+     * monitor start, which relies on the still-bound accessibility service's allowance to start
+     * a foreground service. Everything else waits for [afterRecorded], so a payment app that
+     * checks accessibility at launch finds Detach switched off as early as possible.
+     * [paymentInFront]: [paymentPackage] was read from the active window, so the optional monitor
+     * may treat it as in front until Android reports it left (rather than as a 30 second hint).
+     */
+    @Synchronized
+    internal fun record(context: Context, paymentPackage: String? = null, paymentInFront: Boolean = false): Boolean {
         val app = context.applicationContext
         val now = System.currentTimeMillis()
         val duration = durationMs(app)
         val until = now + duration
         val stored = prefs(app)
+        val payment = paymentPackage?.takeIf { it in Settings(app).paymentPackages }
         val saved = stored.edit().putLong(KEY_UNTIL, until).putLong(KEY_STARTED, now)
             .putString(KEY_TOKEN, UUID.randomUUID().toString())
             .putLong(KEY_ELAPSED, SystemClock.elapsedRealtime()).putInt(KEY_BOOT, bootCount(app))
             .putLong(KEY_DURATION, duration).putBoolean(KEY_ATTEMPTED, false)
-            .putString(KEY_PAYMENT, paymentPackage?.takeIf { it in Settings(app).paymentPackages })
-            .remove(KEY_SUPPRESSED_PAYMENT).remove(KEY_SUPPRESSED_ELAPSED).remove(KEY_SUPPRESSED_BOOT)
-            .removeResumeAuthorization().commit()
+            .putString(KEY_PAYMENT, payment).putBoolean(KEY_PAYMENT_IN_FRONT, payment != null && paymentInFront)
+            .removeLegacySuppression().removeResumeAuthorization().commit()
         if (!saved) {
             stored.edit().remove(KEY_UNTIL).remove(KEY_STARTED).remove(KEY_TOKEN).removeResumeAuthorization().commit()
             return false
         }
-        cancelAlarms(app)
-        scheduleAlarm(app, until)
         PauseForegroundMonitor.startForPause(app)
-        refreshNotification(app)
         return true
+    }
+
+    /** Replaces any older alarms with this pause's single reminder and shows the paused status. */
+    @Synchronized
+    internal fun afterRecorded(context: Context) {
+        val app = context.applicationContext
+        cancelAlarms(app)
+        if (isPending(app) && until(app) > 0L) scheduleAlarm(app, until(app))
+        refreshNotification(app)
     }
 
     /**
@@ -175,6 +216,11 @@ object Pause {
         prefs(context).getString(KEY_PAYMENT, null)?.takeIf { it in Settings(context).paymentPackages }
     }.getOrNull()
 
+    /** The starting package was confirmed as the active window, not only seen in an event. */
+    internal fun startingPaymentWasInFront(context: Context): Boolean = runCatching {
+        startingPaymentPackage(context) != null && prefs(context).getBoolean(KEY_PAYMENT_IN_FRONT, false)
+    }.getOrDefault(false)
+
     internal fun timerDue(context: Context): Boolean = runCatching {
         automaticToken(context) != null && System.currentTimeMillis() >= until(context) &&
             SystemClock.elapsedRealtime() >= prefs(context).getLong(KEY_ELAPSED, Long.MAX_VALUE) +
@@ -185,29 +231,57 @@ object Pause {
     internal fun onTimer(context: Context) {
         val token = automaticToken(context)
         if (token != null && timerDue(context)) {
-            if (PauseForegroundMonitor.paymentIsKnown(context)) {
-                scheduleAlarm(context, System.currentTimeMillis() + ForegroundPackages.STATE_MAX_MS)
-            } else resumeAutomatically(context, token, false)
+            when {
+                PauseForegroundMonitor.paymentIsKnown(context) ->
+                    scheduleAlarm(context, System.currentTimeMillis() + ForegroundPackages.STATE_MAX_MS)
+                deferWhileLocked(context) -> scheduleAlarm(context, System.currentTimeMillis() + LOCKED_RETRY_MS)
+                else -> resumeAutomatically(context, token)
+            }
         }
         remind(context)
     }
 
+    /**
+     * While the screen is off or locked the front app is unknown, and a payment app left open
+     * (a PIN or OTP screen) checks accessibility again as soon as the phone is unlocked. Instagram
+     * and YouTube cannot be used while locked, so the timer waits for an unlock instead of turning
+     * Detach on behind the lock screen. Bounded: once less than [LOCKED_DEFER_MARGIN_MS] of the
+     * pause's automatic authority is left it resumes anyway, so a pause never outlives it just
+     * because the phone stayed in a pocket.
+     */
+    private fun deferWhileLocked(context: Context): Boolean {
+        val unlocked = runCatching {
+            context.getSystemService(PowerManager::class.java)?.isInteractive == true &&
+                context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == false
+        }.getOrDefault(true)
+        return !unlocked && SystemClock.elapsedRealtime() + LOCKED_DEFER_MARGIN_MS < automaticDeadlineElapsed(context)
+    }
+
+    /**
+     * [settled]: the monitor has observed continuously for at least one poll since it (re)started,
+     * for example after an unlock, so a payment app coming back to the front has had time to show
+     * up. Only a due timer waits for it; an observed Instagram/YouTube foreground does not.
+     */
     @Synchronized
-    internal fun onObservedForeground(context: Context, token: String, packageName: String?, paymentForeground: Boolean) {
+    internal fun onObservedForeground(
+        context: Context, token: String, packageName: String?, paymentForeground: Boolean, settled: Boolean = true,
+    ) {
         if (token != automaticToken(context) || paymentForeground ||
             !Settings(context).resumeOnSocialForeground || !PauseForegroundMonitor.hasUsageAccess(context)) return
         val social = packageName in Targets.PACKAGES
-        if (social || timerDue(context)) resumeAutomatically(context, token, social)
+        if (social || settled && timerDue(context)) resumeAutomatically(context, token)
     }
 
-    private fun resumeAutomatically(context: Context, token: String, social: Boolean): Boolean {
-        if (token != automaticToken(context)) return false
+    /** Detach's own service is listed in the enabled accessibility services. Unreadable counts as listed. */
+    internal fun serviceListed(context: Context): Boolean = runCatching {
         val service = ComponentName(context, DetachService::class.java)
-        val enabled = runCatching {
-            SysSettings.Secure.getString(context.contentResolver, SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-                .orEmpty().split(':').any { ComponentName.unflattenFromString(it) == service }
-        }.getOrDefault(true)
-        if (enabled) return false
+        SysSettings.Secure.getString(context.contentResolver, SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            .orEmpty().split(':').any { ComponentName.unflattenFromString(it) == service }
+    }.getOrDefault(true)
+
+    private fun resumeAutomatically(context: Context, token: String): Boolean {
+        if (token != automaticToken(context)) return false
+        if (serviceListed(context)) return false
         val stored = prefs(context)
         if (!stored.edit().putBoolean(KEY_ATTEMPTED, true).commit()) return false
         if (!canSelfEnable(context)) {
@@ -215,28 +289,20 @@ object Pause {
             refreshNotification(context)
             return false
         }
-        if (!social) {
-            stored.edit().putString(KEY_SUPPRESSED_PAYMENT, stored.getString(KEY_PAYMENT, null))
-                .putLong(KEY_SUPPRESSED_ELAPSED, SystemClock.elapsedRealtime())
-                .putInt(KEY_SUPPRESSED_BOOT, bootCount(context)).commit()
-        }
         return resume(context)
     }
 
-    @Synchronized
+    /**
+     * True when [packageName] is a selected app (UPI, bank or an app the owner pays from) and
+     * auto-pause is on. There is deliberately no exemption after an automatic resume: if the
+     * timer brings Detach back while a selected app is still in front, it pauses again at once.
+     * That cannot become a tight loop, because every reconnect needs fresh authority (a timer
+     * that is due at least a minute after the new pause began, an observed Instagram/YouTube
+     * foreground, or an explicit Resume tap), and a selected app's foreground is never one.
+     * Not synchronized: called for accessibility events on the main thread and only reads.
+     */
     fun shouldAutoPausePayment(context: Context, packageName: String?): Boolean {
         if (packageName == null) return false
-        val stored = prefs(context)
-        val suppressed = runCatching { stored.getString(KEY_SUPPRESSED_PAYMENT, null) }.getOrNull()
-        if (suppressed != null) {
-            val valid = runCatching {
-                stored.getInt(KEY_SUPPRESSED_BOOT, -1) == bootCount(context) &&
-                    SystemClock.elapsedRealtime() - stored.getLong(KEY_SUPPRESSED_ELAPSED, -1L) in 0..RESUME_AUTHORIZATION_MS
-            }.getOrDefault(false)
-            if (valid && packageName == suppressed) return false
-            if (valid && packageName in Targets.SYSTEM_UI) return false
-            stored.edit().remove(KEY_SUPPRESSED_PAYMENT).remove(KEY_SUPPRESSED_ELAPSED).remove(KEY_SUPPRESSED_BOOT).commit()
-        }
         val settings = Settings(context)
         return settings.autoPausePayments && packageName in settings.paymentPackages
     }
@@ -285,8 +351,8 @@ object Pause {
         val app = context.applicationContext
         cancelAlarms(app)
         prefs(app).edit().remove(KEY_UNTIL).remove(KEY_STARTED).remove(KEY_TOKEN).remove(KEY_ELAPSED)
-            .remove(KEY_BOOT).remove(KEY_DURATION).remove(KEY_ATTEMPTED).remove(KEY_PAYMENT)
-            .removeResumeAuthorization().commit()
+            .remove(KEY_BOOT).remove(KEY_DURATION).remove(KEY_ATTEMPTED).remove(KEY_PAYMENT).remove(KEY_PAYMENT_IN_FRONT)
+            .removeLegacySuppression().removeResumeAuthorization().commit()
         PauseForegroundMonitor.stop(app)
         refreshNotification(app)
     }
