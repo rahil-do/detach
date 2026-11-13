@@ -53,32 +53,17 @@ class PauseActivity : Activity() {
         }
         col.addView(ui.icon(R.drawable.ic_pause, 28, ui.caution))
         col.addView(ui.space(20))
-        col.addView(ui.text("Make room for a payment", 23f, strong = true).apply { isAccessibilityHeading = true })
+        col.addView(ui.text(StatusNotifications.PAUSE_ACTION, 23f, strong = true).apply { isAccessibilityHeading = true })
         col.addView(ui.space(12))
         val monitored = Settings(this).resumeOnSocialForeground && Pause.canSelfEnable(this) &&
             PauseForegroundMonitor.hasUsageAccess(this)
-        col.addView(ui.text(if (monitored) {
-            "Accessibility and overlays switch off completely. Your opt-in local app monitor can resume protection when Instagram or YouTube opens."
-        } else {
-            "Accessibility and overlays switch off completely. No app monitor runs in timer-only mode."
+        col.addView(ui.text(when {
+            monitored -> "Resumes in about $minutes min, or when Instagram or YouTube opens."
+            Pause.canSelfEnable(this) -> "Resumes in about $minutes min."
+            else -> "Turn Detach back on in Accessibility when done."
         }, 15f, ui.sub))
-        col.addView(ui.space(12))
-        col.addView(ui.text("Pause before you open the payment app, or the app you pay from, so it starts with Detach already off. Opening a UPI app straight from the home screen is detected only after it has started, which can be too late.", 15f, ui.sub))
-        col.addView(ui.space(20))
-        col.addView(ui.note(if (Pause.canSelfEnable(this)) {
-            "Automatic resume after $minutes ${if (minutes == 1) "minute" else "minutes"}; it waits while the phone is locked. Android may delay the timer. " +
-                if (monitored) "App detection keeps it waiting while a selected app is seen in front."
-                else "Without app detection the timer cannot see a payment app still open and can turn Detach back on during a long checkout; choose enough time."
-        } else {
-            "Reminder after $minutes ${if (minutes == 1) "minute" else "minutes"}. Automatic resume needs the optional USB grant; otherwise turn Detach on in Accessibility settings."
-        }).apply {
-            background = ui.shape()
-            setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
-        })
-        col.addView(ui.space(12))
-        col.addView(ui.text("You can always resume sooner from Detach.", 15f, strong = true))
         col.addView(ui.space(24))
-        col.addView(ui.primary("Pause protection") { confirm() })
+        col.addView(ui.primary("Pause") { confirm() })
         apps = openableApps(this)
         for ((packageName, label) in apps) {
             col.addView(ui.space(4))
@@ -100,13 +85,13 @@ class PauseActivity : Activity() {
         }
     }
 
-    private fun confirm(open: String? = null) = Auth.confirm(this, "Pause for payments") { pause(open) }
+    private fun confirm(open: String? = null) = Auth.confirm(this, StatusNotifications.PAUSE_ACTION) { pause(open) }
 
     private fun pause(open: String?) {
         val launch = open?.let { launchIntent(this, it) }
         val ok = DetachService.pauseForPayments(open)
         if (!ok || launch == null) {
-            toast(if (ok) "Protection paused. Your payment timer is set." else "Could not pause protection. Check Accessibility or try again.")
+            toast(if (ok) "Paused for payment" else "Couldn't pause. Try again.")
             finish()
             return
         }
@@ -121,10 +106,10 @@ class PauseActivity : Activity() {
         if (isDestroyed) return
         if (!Pause.serviceListed(this)) {
             val opened = runCatching { startActivity(launch) }.isSuccess
-            toast(if (opened) "Protection paused. Your payment timer is set." else "Protection paused. Open the payment app yourself.")
+            toast(if (opened) "Paused for payment" else "Paused. Open the app yourself.")
             finish()
         } else if (SystemClock.uptimeMillis() >= deadline) {
-            toast("Protection is pausing, but Android still lists Detach as on. Wait a moment, then open the payment app yourself.")
+            toast("Still turning off. Open the app in a moment.")
             finish()
         } else handler.postDelayed({ awaitOffThenOpen(launch, deadline) }, OFF_POLL_MS)
     }

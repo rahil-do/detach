@@ -82,12 +82,20 @@ object StatusNotifications {
     private const val OPEN_REQUEST = 7100
     private const val PAUSE_REQUEST = 7101
     private const val LEGACY_REMINDER_ID = 7002
-    internal const val PAY_HINT =
-        "Paying from a checkout? Pause first, or select the app you pay from in Detach, so the UPI app opens with Detach already off."
-    internal const val RESTART_HINT =
-        "If Google Pay still says an accessibility app is on, restart your phone once. Detach stays paused through the restart until you resume it in Detach: after a restart neither the timer nor Instagram/YouTube detection can resume it."
-    internal const val DETECTION_STOPPED = "App detection stopped · open Detach to restart it"
-    internal const val RESUME_STALLED = "Resume didn't complete · open Detach and tap Resume"
+    internal const val PAUSE_ACTION = "Pause for payment"
+    internal const val PAUSED_TITLE = "Paused"
+    internal const val RECONNECTING = "Not back soon? Open Detach"
+    internal const val DETECTION_STOPPED = "Detection stopped"
+    internal const val RESUME_STALLED = "Didn't resume · tap to retry"
+    internal const val TAP_TO_RESUME = "Tap to resume"
+    internal const val OPEN_TO_RESUME = "Open Detach to resume"
+
+    /** The one line shown while a payment pause can resume by itself. */
+    internal fun resumesBy(context: Context) = "Resumes by about ${Pause.untilText(context)}"
+
+    /** Detection stopped, but the timer still resumes: same time as the screen shows. */
+    internal fun detectionStoppedText(context: Context) =
+        "$DETECTION_STOPPED · ${resumesBy(context).replaceFirstChar { it.lowercase() }}"
 
     /** What this process last posted as the status notification, or null if it is not posted. */
     @Volatile private var posted: String? = null
@@ -128,7 +136,7 @@ object StatusNotifications {
 
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL, "Protection status", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Silent protection status and payment-pause controls"
+                description = "Silent status and pause button"
                 setSound(null, null)
                 enableVibration(false)
                 setShowBadge(false)
@@ -140,37 +148,32 @@ object StatusNotifications {
             Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        // One short line per status; the screen and docs carry the explanations.
         val title = when {
-            !paused && breather > 0L -> "Breather active"
-            !paused -> "Protection is on"
-            status == PauseStatus.DUE -> "Protection is still paused"
-            else -> "Protection paused"
+            !paused && breather > 0L -> "Breather"
+            !paused -> "Detach is on"
+            status == PauseStatus.RECONNECTING -> "Resuming…"
+            else -> PAUSED_TITLE
         }
-        val text = when (status) {
-            null -> if (breather > 0L) "Selected features available for up to ${(breather + 59_999L) / 60_000L} min · usual limits return automatically"
-                else "On-device protection · you're in control"
+        val text: String? = when (status) {
+            null -> if (breather > 0L) "${(breather + 59_999L) / 60_000L} min left" else null
             // Also what stays shown if Detach's process dies while waiting, so it says what to do then.
-            PauseStatus.RECONNECTING -> "Resume requested · waiting for Android. If protection doesn't come back, open Detach."
+            PauseStatus.RECONNECTING -> RECONNECTING
             PauseStatus.RESUME_STALLED -> RESUME_STALLED
-            PauseStatus.DUE -> "Timer is due. If protection has not resumed, open Detach."
+            PauseStatus.DUE, PauseStatus.MANUAL -> TAP_TO_RESUME
             // Only the monitor's own notification says detection is on: it disappears with the
-            // monitor, while this one cannot be updated once the process is gone.
-            PauseStatus.DETECTION_STOPPED -> "$DETECTION_STOPPED · automatic resume after about ${Pause.untilText(app)}"
-            PauseStatus.DETECTION_ON, PauseStatus.AUTOMATIC -> "Automatic resume after about ${Pause.untilText(app)} · open Detach to resume sooner"
-            PauseStatus.MANUAL -> "Reminder at about ${Pause.untilText(app)} · open Detach and tap Resume"
-            PauseStatus.NEEDS_USB -> "Reminder at about ${Pause.untilText(app)} · automatic resume needs optional USB setup"
+            // monitor, while this one cannot be updated once the process is gone. Opening Detach
+            // (this notification's tap) restarts detection.
+            PauseStatus.DETECTION_STOPPED -> detectionStoppedText(app)
+            PauseStatus.DETECTION_ON, PauseStatus.AUTOMATIC -> resumesBy(app)
+            PauseStatus.NEEDS_USB -> OPEN_TO_RESUME
         }
-        val details = when {
-            paused -> "$text\n\n$RESTART_HINT"
-            breather > 0L -> text
-            else -> "$text\n\n$PAY_HINT"
-        }
-        val content = "$paused|$title|$details"
+        val content = "$paused|$title|$text"
         if (content == posted && listed(manager, Pause.NOTIFICATION_ID)) return
         val publicVersion = Notification.Builder(app, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Detach")
-            .setContentText("Open Detach to view protection status.")
+            .setContentText("Open Detach for status")
             .setContentIntent(open)
             .setLocalOnly(true)
             .setShowWhen(false)
@@ -179,7 +182,6 @@ object StatusNotifications {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText(details))
             .setContentIntent(open)
             .setPublicVersion(publicVersion)
             .setLocalOnly(true)
@@ -196,7 +198,7 @@ object StatusNotifications {
             )
             builder.addAction(
                 Notification.Action.Builder(
-                    Icon.createWithResource(app, R.drawable.ic_notification), "Pause for payments", pause,
+                    Icon.createWithResource(app, R.drawable.ic_notification), PAUSE_ACTION, pause,
                 ).build(),
             )
         }

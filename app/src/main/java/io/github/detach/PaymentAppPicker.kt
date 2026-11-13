@@ -82,8 +82,7 @@ object PaymentAppPicker {
         bitmap
     }.getOrNull()
 
-    internal const val HINT = "Detach pauses while any selected app is open. Include the apps you pay from, " +
-        "e.g. investing or shopping apps, so it is already off when they open a UPI app."
+    internal const val HINT = "Detach pauses while these are open. Include apps you pay from."
 
     private val PACKAGE_LABEL = Regex("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+")
 
@@ -153,7 +152,7 @@ object PaymentAppPicker {
             override fun afterTextChanged(text: Editable?) = Unit
         }
         private val dialog = AlertDialog.Builder(activity)
-            .setTitle("UPI, bank & checkout apps")
+            .setTitle("Payment apps")
             .setView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0)
@@ -207,7 +206,7 @@ object PaymentAppPicker {
             loaded = result.isSuccess
             apps = result.getOrDefault(emptyList())
             filter()
-            if (!loaded) status.text = "Couldn’t load installed apps. Please try again."
+            if (!loaded) status.text = "Couldn’t load apps. Try again."
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = loaded
         }
 
@@ -219,7 +218,7 @@ object PaymentAppPicker {
         }
 
         private fun updateSummary() {
-            summary.text = "${selected.size} selected. Saved choices for unavailable apps are kept."
+            summary.text = "${selected.size} selected"
         }
 
         private fun requestIcon(app: App) {

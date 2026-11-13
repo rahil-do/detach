@@ -393,8 +393,8 @@ class PauseForegroundMonitor : Service() {
 
     private fun showForegroundNotification() {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Optional payment pause monitor", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Local package-only checks during a payment pause"
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, "App detection", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "App-name checks while paused"
             lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             setShowBadge(false)
         })
@@ -403,14 +403,10 @@ class PauseForegroundMonitor : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val publicVersion = Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Detach").setContentText("Optional local monitor running").setLocalOnly(true).build()
+            .setContentTitle("Detach").setContentText("App detection on").setLocalOnly(true).build()
         val builder = Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Payment pause: app detection on")
-            .setContentText("Resumes protection when Instagram or YouTube opens. Package names only, while unlocked.")
-            .setStyle(Notification.BigTextStyle().bigText(
-                "Resumes protection when Instagram or YouTube opens, not while a selected payment app is in front. " +
-                    "Checks app package names about every 2 seconds while your screen is unlocked; no screen content.",
-            ))
+            .setContentTitle(TITLE)
+            .setContentText("App names only, while unlocked")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .setLocalOnly(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(publicVersion)
@@ -471,6 +467,7 @@ class PauseForegroundMonitor : Service() {
         /** How far each query reaches back before the previous one, for events stored late. */
         internal const val QUERY_OVERLAP_MS = 5_000L
         internal const val NOTIFICATION_ID = 7004
+        internal const val TITLE = "Waiting for Instagram or YouTube"
         /** Screen on/unlock seen while still locked: look again at these delays, screen on only. */
         internal val UNLOCK_RECHECKS_MS = longArrayOf(250, 1_000, 3_000)
         /** How long an accepted start request counts as on its way to onStartCommand. */

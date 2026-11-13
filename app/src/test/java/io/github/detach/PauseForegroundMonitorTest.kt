@@ -133,7 +133,8 @@ class PauseForegroundMonitorTest {
         // Shown at once: Android's 10 second deferral raced the stop and left a stale notification.
         assertEquals(Notification.FOREGROUND_SERVICE_IMMEDIATE,
             Notification::class.java.getDeclaredField("mFgsDeferBehavior").apply { isAccessible = true }.getInt(notification))
-        assertTrue(notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("Instagram or YouTube"))
+        assertEquals("Waiting for Instagram or YouTube", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertTrue(notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("App names only"))
         assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility)
         assertTrue(notification.flags and Notification.FLAG_ONGOING_EVENT != 0)
         assertTrue(notification.flags and Notification.FLAG_LOCAL_ONLY != 0)
@@ -287,6 +288,8 @@ class PauseForegroundMonitorTest {
         // The paused status says so instead of implying that detection is still running.
         val text = shadowOf(manager).getNotification(Pause.NOTIFICATION_ID).extras.getCharSequence(Notification.EXTRA_TEXT).toString()
         assertTrue(text, text.startsWith(StatusNotifications.DETECTION_STOPPED))
+        // The timer still resumes it, and the notification keeps the time the screen shows.
+        assertTrue(text, text.endsWith("resumes by about ${Pause.untilText(context)}"))
     }
 
     @Test fun `a running monitor's notification is never swept and the status does not claim it stopped`() {
@@ -296,7 +299,7 @@ class PauseForegroundMonitorTest {
         val text = shadowOf(context.getSystemService(NotificationManager::class.java)).getNotification(Pause.NOTIFICATION_ID)
             .extras.getCharSequence(Notification.EXTRA_TEXT).toString()
         assertFalse(text, text.contains(StatusNotifications.DETECTION_STOPPED))
-        assertTrue(text, text.startsWith("Automatic resume"))
+        assertTrue(text, text.startsWith("Resumes by about"))
     }
 
     /** The monitor is lost a minute into a pause from the bank's own window; Detach is then opened. */

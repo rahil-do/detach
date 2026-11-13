@@ -40,9 +40,9 @@ object BreatherControls {
             column.addView(ui.section("BREATHER"))
             column.addView(ui.note(if (remaining > 0) {
                 val minutes = (remaining + 59_999L) / 60_000L
-                "Breather on · $minutes min left. Instagram and YouTube are unblocked until it ends, then protection returns on its own."
+                "Breather on · $minutes min left"
             } else {
-                "Need a few minutes? A breather unblocks Instagram and YouTube for up to an hour, then protection returns on its own. It always asks for your fingerprint or password."
+                "Unblock Instagram & YouTube for a while."
             }).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE })
             column.addView(ui.space(12))
             column.addView(ui.secondary(if (remaining > 0) "Extend breather" else "Start a breather") {
@@ -72,9 +72,9 @@ object BreatherControls {
         val builder = AlertDialog.Builder(activity)
             .setTitle("Authentication required")
             .setMessage(if (Build.VERSION.SDK_INT >= 29) {
-                "A breather needs your fingerprint or Detach password every time. Set a Detach password in the app’s password settings, or enroll biometrics in Android settings. A phone PIN alone cannot start a breather."
+                "Set a Detach password or enroll biometrics first."
             } else {
-                "On this Android version, a breather needs your Detach password every time. Set a Detach password in the app’s password settings first. A phone PIN alone cannot start a breather."
+                "Set a Detach password first."
             })
             .setNegativeButton("Back", null)
         if (Build.VERSION.SDK_INT >= 29) {
@@ -88,7 +88,7 @@ object BreatherControls {
                     Intent(SystemSettings.ACTION_SECURITY_SETTINGS)
                 }
                 runCatching { activity.startActivity(intent) }.onFailure {
-                    Toast.makeText(activity, "Open Android security settings to enroll biometrics, or set a Detach password.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(activity, "Open Security settings to add a fingerprint.", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -126,9 +126,9 @@ object BreatherControls {
             setPadding(ui.dp(24), ui.dp(4), ui.dp(24), ui.dp(8))
         }
         content.addView(ui.note(if (remaining > 0) {
-            "Pick a new length. It replaces the time left; it doesn’t add to it."
+            "Replaces the time left."
         } else {
-            "Instagram and YouTube will be fully unblocked, then protection returns on its own."
+            "Protection returns on its own."
         }))
         val picker = minutePicker(activity, ui, initial)
         val unit = ui.text("min", 18f, ui.sub, strong = true).apply {
@@ -172,7 +172,7 @@ object BreatherControls {
                         onChanged()
                         BreatherIntro.play(activity, minutes)
                     } else {
-                        Toast.makeText(activity, "Breather not started. No new access was granted.", Toast.LENGTH_LONG).show()
+                        Toast.makeText(activity, "Breather not started", Toast.LENGTH_LONG).show()
                     }
                 }
             }

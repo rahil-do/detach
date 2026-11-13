@@ -64,7 +64,7 @@ class ForegroundServiceShadow : ShadowAccessibilityService() {
         pendingAtDisable = Pause.isPending(app)
         alarmsAtDisable = shadowOf(app.getSystemService(AlarmManager::class.java)).scheduledAlarms.size
         notifiedAtDisable = shadowOf(app.getSystemService(NotificationManager::class.java)).getNotification(Pause.NOTIFICATION_ID)
-            ?.extras?.getString(Notification.EXTRA_TITLE) == "Protection paused"
+            ?.extras?.getString(Notification.EXTRA_TITLE) == StatusNotifications.PAUSED_TITLE
         disabled = true
     }
 }
@@ -248,6 +248,10 @@ class DetachServiceTest {
         assertEquals(0, ForegroundServiceShadow.alarmsAtDisable)
         assertFalse(ForegroundServiceShadow.notifiedAtDisable)
         assertEquals(1, shadowOf(service.getSystemService(AlarmManager::class.java)).scheduledAlarms.size)
+        // The check above compares against the title that is actually posted, so it can fail.
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(StatusNotifications.PAUSED_TITLE, shadowOf(service.getSystemService(NotificationManager::class.java))
+            .getNotification(Pause.NOTIFICATION_ID)?.extras?.getString(Notification.EXTRA_TITLE))
     }
 
     @Test fun `a queued cover cannot appear after the user changes apps`() {

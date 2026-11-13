@@ -89,16 +89,19 @@ class OtherAccessibilityAppsTest {
         assertNull(activity.window.decorView.findViewWithTag<View>("other-accessibility"))
     }
 
-    @Test @Config(qualifiers = "night") fun `payments section recommends pausing before the payment app opens`() {
-        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        val setup = activity.window.decorView.findViewWithTag<ViewGroup>("payment-setup")
-        val text = views(setup).filterIsInstance<TextView>().joinToString(" ") { it.text }
-        assertTrue(text.contains("apps you pay from"))
-        assertTrue(text.contains("Quick Settings tile"))
-        assertTrue(text.contains("restart your phone once"))
-        assertTrue(text.contains("stays paused through the restart"))
+    @Test @Config(qualifiers = "night") fun `payments section is one line and shows the restart tip only while paused`() {
+        var activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val ui = Ui(activity)
-        views(setup).filterIsInstance<TextView>().forEach { assertContrast(it.currentTextColor, ui.surface, 4.5) }
+        val setup = activity.window.decorView.findViewWithTag<TextView>("payment-setup")
+        assertEquals("Detach turns off while you pay.", setup.text.toString())
+        assertContrast(setup.currentTextColor, ui.bg, 4.5)
+        assertNull(activity.window.decorView.findViewWithTag<View>("payment-restart"))
+        context.getSharedPreferences("pause", Context.MODE_PRIVATE).edit()
+            .putLong("until", System.currentTimeMillis() + 60_000).commit()
+        activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val restart = activity.window.decorView.findViewWithTag<TextView>("payment-restart")
+        assertTrue(restart.text.toString(), restart.text.contains("Restart once"))
+        assertContrast(restart.currentTextColor, ui.bg, 4.5)
     }
 
     private fun assertWarning() {
@@ -110,7 +113,7 @@ class OtherAccessibilityAppsTest {
         val texts = views(warning).filterIsInstance<TextView>()
         val note = texts.first { it.text.contains("Remote Input") }
         assertFalse(note.text.contains("Accessibility Menu"))
-        assertTrue(note.text.contains("Detach can only switch itself off"))
+        assertTrue(note.text.toString(), note.text.contains("is also on. Payment apps may refuse."))
         assertEquals(ui.sub, note.currentTextColor)
         assertContrast(note.currentTextColor, ui.bg, 4.5)
         val open = views(warning).filterIsInstance<Button>().single { it.text == "Open Accessibility settings" }

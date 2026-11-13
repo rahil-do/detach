@@ -303,7 +303,7 @@ class PaymentAppPickerTest {
         install("com.example.checkout", "Checkout Example")
         PaymentAppPicker.show(activity()) {}
         val dialog = loadedDialog()
-        assertEquals("UPI, bank & checkout apps", shadowOf(dialog).title.toString())
+        assertEquals("Payment apps", shadowOf(dialog).title.toString())
         val hint = dialog.window!!.decorView.findViewWithTag<TextView>("payment-app-hint")
         assertEquals(View.VISIBLE, hint.visibility)
         assertTrue(hint.text.contains("apps you pay from"))

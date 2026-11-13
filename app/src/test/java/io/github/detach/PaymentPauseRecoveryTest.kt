@@ -259,10 +259,10 @@ class PaymentPauseRecoveryTest {
         assertTrue(Pause.resume(ctx))
         assertEquals(others, list())
         assertEquals(PauseStatus.RECONNECTING, PauseStatus.of(ctx))
-        assertTrue(statusText(), statusText().startsWith("Resume requested · waiting for Android"))
+        assertEquals(StatusNotifications.RECONNECTING, statusText())
         idle(Pause.REBIND_GAP_MS)
         assertEquals(PauseStatus.RECONNECTING, PauseStatus.of(ctx))
-        assertTrue(statusText(), statusText().startsWith("Resume requested · waiting for Android"))
+        assertEquals(StatusNotifications.RECONNECTING, statusText())
     }
 
     @Test fun `a reconnect that never completes says to tap Resume once its request expires`() {
@@ -270,7 +270,7 @@ class PaymentPauseRecoveryTest {
         Pause.begin(ctx)
         assertTrue(Pause.resume(ctx))
         assertEquals("$others:$me", list())
-        assertTrue(statusText(), statusText().contains("If protection doesn't come back, open Detach"))
+        assertEquals(StatusNotifications.RECONNECTING, statusText())
         // Android never connects it; the bounded rebinds run, then the request expires.
         idle(Pause.RESUME_AUTHORIZATION_MS + 2_000L)
         assertEquals("$others:$me", list())
@@ -294,7 +294,7 @@ class PaymentPauseRecoveryTest {
         assertTrue(Pause.resumesAutomatically(ctx))
         assertEquals("app detection is re-attached to the same pause", token, startedMonitorToken())
         assertEquals(Pause.ACTION_REMIND, shadowOf(alarms.scheduledAlarms.single().operation).savedIntent.action)
-        assertTrue(statusText(), statusText().startsWith("Automatic resume after about ${Pause.untilText(ctx)}"))
+        assertEquals("Resumes by about ${Pause.untilText(ctx)}", statusText())
     }
 
     @Test fun `a same boot BOOT_COMPLETED keeps a waiting reconnect request`() {
@@ -315,7 +315,7 @@ class PaymentPauseRecoveryTest {
         assertTrue(Pause.isPending(ctx))
         assertNull(Pause.automaticToken(ctx))
         assertNull(startedMonitorToken())
-        assertTrue(statusText(), statusText().contains("open Detach and tap Resume"))
+        assertEquals(StatusNotifications.TAP_TO_RESUME, statusText())
     }
 
     @Test fun `an elapsed clock behind the pause start counts as a reboot even with an unchanged boot count`() {
@@ -334,7 +334,7 @@ class PaymentPauseRecoveryTest {
         PauseReceiver().onReceive(ctx, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
         assertNull(Pause.automaticToken(ctx))
         assertEquals(PauseStatus.MANUAL, PauseStatus.of(ctx))
-        assertTrue(statusText(), statusText().contains("open Detach and tap Resume"))
+        assertEquals(StatusNotifications.TAP_TO_RESUME, statusText())
     }
 
     // ------------------------------------------------------------ 3: force-stop
@@ -350,7 +350,7 @@ class PaymentPauseRecoveryTest {
         Robolectric.buildActivity(MainActivity::class.java).setup()
         assertEquals(1, alarms.scheduledAlarms.size)
         assertEquals(token, startedMonitorToken())
-        assertTrue(statusText(), statusText().startsWith("Automatic resume after about"))
+        assertTrue(statusText(), statusText().startsWith("Resumes by about"))
         assertEquals(token, Pause.automaticToken(ctx))
         assertFalse(Pause.consumeResumeAuthorization(ctx))
     }
@@ -524,7 +524,7 @@ class PaymentPauseRecoveryTest {
         PauseReceiver().onReceive(ctx, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
         val updated = notifications.getNotification(Pause.NOTIFICATION_ID)
         assertTrue(updated !== posted)
-        assertTrue(statusText().contains("tap Resume"))
+        assertEquals(StatusNotifications.TAP_TO_RESUME, statusText())
         assertTrue(updated.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
         assertEquals(1, notifications.size())
     }

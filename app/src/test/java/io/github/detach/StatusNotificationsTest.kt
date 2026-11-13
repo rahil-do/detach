@@ -57,7 +57,8 @@ class StatusNotificationsTest {
         StatusNotifications.refresh(context)
 
         val notification = status()
-        assertEquals("Protection is on", notification.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Detach is on", notification.extras.getString(Notification.EXTRA_TITLE))
+        assertNull(notification.extras.getCharSequence(Notification.EXTRA_TEXT))
         val open = shadowOf(notification.contentIntent)
         assertTrue(open.isActivity)
         assertTrue(open.isImmutable)
@@ -65,7 +66,7 @@ class StatusNotificationsTest {
         assertNull(open.savedIntent.action)
         assertEquals(1, notification.actions.size)
         val action = notification.actions.single()
-        assertEquals("Pause for payments", action.title.toString())
+        assertEquals("Pause for payment", action.title.toString())
         val pause = shadowOf(action.actionIntent)
         assertTrue(pause.isActivity)
         assertTrue(pause.isImmutable)
@@ -101,7 +102,7 @@ class StatusNotificationsTest {
         assertEquals(Notification.CATEGORY_STATUS, notification.category)
         assertNotNull(notification.publicVersion)
         assertEquals("Detach", notification.publicVersion.extras.getString(Notification.EXTRA_TITLE))
-        assertEquals("Open Detach to view protection status.", notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+        assertEquals("Open Detach for status", notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
         assertTrue(notification.publicVersion.actions.isNullOrEmpty())
     }
 
@@ -111,29 +112,30 @@ class StatusNotificationsTest {
         StatusNotifications.refresh(context)
 
         val notification = status()
-        assertEquals("Protection paused", notification.extras.getString(Notification.EXTRA_TITLE))
-        val text = notification.extras.getString(Notification.EXTRA_TEXT).orEmpty()
-        assertTrue(text.contains("Reminder at about ${Pause.untilText(context)}"))
-        assertTrue(text.contains("automatic resume needs optional USB setup"))
+        assertEquals("Paused", notification.extras.getString(Notification.EXTRA_TITLE))
+        // No USB grant: Detach can't turn itself back on, so no time is promised.
+        assertEquals(StatusNotifications.OPEN_TO_RESUME, notification.extras.getString(Notification.EXTRA_TEXT))
         assertTrue(notification.actions.isNullOrEmpty())
         assertEquals(MainActivity::class.java.name, shadowOf(notification.contentIntent).savedIntent.component?.className)
         assertTrue(shadowOf(notification.contentIntent).isImmutable)
     }
 
-    @Test fun `paused status explains the Google Pay restart and running status says to pause first`() {
+    @Test fun `status notifications carry at most one short line and no hint paragraphs`() {
+        fun assertMinimal(notification: Notification) {
+            assertNull(notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
+            val text = notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
+            assertFalse(text, text.contains("\n"))
+            assertTrue(text, text.split(' ').filter { it.isNotBlank() }.size <= 8)
+        }
         pause()
         StatusNotifications.refresh(context)
-        val paused = status().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
-        assertTrue(paused.contains("restart your phone once"))
-        assertTrue(paused.contains("stays paused through the restart"))
+        assertMinimal(status())
         context.getSharedPreferences("pause", Context.MODE_PRIVATE).edit().clear().commit()
         setRunning(true)
         Settings(context).pauseNotification = true
         StatusNotifications.refresh(context)
-        val running = status().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
-        assertTrue(running.contains("Pause first"))
-        assertTrue(running.contains("app you pay from"))
-        assertEquals("On-device protection · you're in control", status().extras.getString(Notification.EXTRA_TEXT))
+        assertMinimal(status())
+        assertEquals("Detach is on", status().extras.getString(Notification.EXTRA_TITLE))
     }
 
     @Test fun `a pending payment pause wins over a service that is still disconnecting`() {
@@ -142,7 +144,7 @@ class StatusNotificationsTest {
         pause()
         StatusNotifications.refresh(context)
 
-        assertEquals("Protection paused", status().extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Paused", status().extras.getString(Notification.EXTRA_TITLE))
         assertTrue(status().actions.isNullOrEmpty())
     }
 
@@ -153,8 +155,8 @@ class StatusNotificationsTest {
         StatusNotifications.refresh(context)
         StatusNotifications.refresh(context)
 
-        assertEquals("Protection is still paused", status().extras.getString(Notification.EXTRA_TITLE))
-        assertTrue(status().extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("open Detach"))
+        assertEquals("Paused", status().extras.getString(Notification.EXTRA_TITLE))
+        assertEquals(StatusNotifications.TAP_TO_RESUME, status().extras.getString(Notification.EXTRA_TEXT))
         assertTrue(status().actions.isNullOrEmpty())
         assertEquals(until, Pause.until(context))
         assertEquals("other/service", SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES))
@@ -167,7 +169,8 @@ class StatusNotificationsTest {
         pause(System.currentTimeMillis() + Pause.MAX_MS + 120_000L)
         StatusNotifications.refresh(context)
 
-        assertEquals("Protection is still paused", status().extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Paused", status().extras.getString(Notification.EXTRA_TITLE))
+        assertFalse(status().extras.getString(Notification.EXTRA_TEXT).orEmpty().startsWith("Resumes by"))
         assertTrue(Pause.isPending(context))
     }
 

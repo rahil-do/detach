@@ -295,8 +295,8 @@ class AutomaticPauseTest {
         StatusNotifications.refresh(context)
         val status = shadowOf(context.getSystemService(android.app.NotificationManager::class.java)).getNotification(Pause.NOTIFICATION_ID)
         val text = status.extras.getString(android.app.Notification.EXTRA_TEXT).orEmpty()
-        assertFalse(text.contains("Automatic resume"))
-        assertTrue(text.contains("tap Resume"))
+        assertFalse(text.contains("Resumes by"))
+        assertEquals(StatusNotifications.TAP_TO_RESUME, text)
     }
 
     @Test fun `failed pause persistence is reported before scheduling or monitor startup`() {

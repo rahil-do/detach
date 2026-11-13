@@ -102,15 +102,15 @@ class StatusScreenTest {
     @Test fun `the open screen shows protection on as soon as the service reconnects`() {
         Pause.begin(ctx)
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        assertTrue(texts(activity).contains("Protection is paused"))
+        assertTrue(texts(activity).contains("Paused"))
         // Resume without the USB grant: the owner turns Detach on in Accessibility settings.
-        views(activity).filterIsInstance<Button>().first { it.text == "Resume protection" }.performClick()
+        views(activity).filterIsInstance<Button>().first { it.text == "Resume" }.performClick()
         setList("$others:$me")
         connectService()
         assertTrue(DetachService.isRunning)
         idle()
         assertTrue(texts(activity).toString(), texts(activity).contains("Protection is on"))
-        assertFalse(texts(activity).contains("Protection is paused"))
+        assertFalse(texts(activity).contains("Paused"))
     }
 
     @Test fun `the open screen stops claiming protection when the service goes away`() {
@@ -135,17 +135,17 @@ class StatusScreenTest {
         Pause.begin(ctx)
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val until = Pause.untilText(ctx)
-        assertTrue(statusDetail(activity), statusDetail(activity).contains("Resumes when Instagram or YouTube opens"))
-        assertTrue(notificationText(), notificationText().startsWith("Automatic resume after about $until"))
+        assertTrue(statusDetail(activity), statusDetail(activity).contains("when Instagram or YouTube opens"))
+        assertTrue(statusDetail(activity), statusDetail(activity).contains("resumes by about $until"))
+        assertEquals("Resumes by about $until", notificationText())
         // An update ends the pause's automatic authority while the screen is open.
         PauseReceiver().onReceive(ctx, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
         idle()
         val detail = statusDetail(activity)
         assertFalse(detail, detail.contains("Instagram"))
-        assertFalse(detail, detail.contains("utomatic resume after"))
-        assertTrue(detail, detail.contains("Reminder at about $until"))
-        assertTrue(detail, detail.contains("tap Resume protection"))
-        assertTrue(notificationText(), notificationText().startsWith("Reminder at about $until · open Detach and tap Resume"))
+        assertFalse(detail, detail.contains("esumes by"))
+        assertTrue(detail, detail.contains("Tap Resume"))
+        assertEquals(StatusNotifications.TAP_TO_RESUME, notificationText())
     }
 
     @Test fun `screen and notification agree on whether the pause can resume by itself`() {
@@ -162,10 +162,11 @@ class StatusScreenTest {
             val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
             val screen = statusDetail(activity)
             val note = notificationText()
-            assertEquals("${case.label}: $screen", case.automatic, screen.contains("Automatic resume after about"))
-            assertEquals("${case.label}: $note", case.automatic, note.startsWith("Automatic resume after about"))
-            assertTrue("${case.label}: $screen", screen.contains(Pause.untilText(ctx)))
-            assertTrue("${case.label}: $note", note.contains(Pause.untilText(ctx)))
+            assertEquals("${case.label}: $screen", case.automatic, screen.contains("resumes by about"))
+            assertEquals("${case.label}: $note", case.automatic, note.startsWith("Resumes by about"))
+            // A time is shown only when Detach can keep it.
+            assertEquals("${case.label}: $screen", case.automatic, screen.contains(Pause.untilText(ctx)))
+            assertEquals("${case.label}: $note", case.automatic, note.contains(Pause.untilText(ctx)))
             shadowOf(ctx).denyPermissions(Manifest.permission.WRITE_SECURE_SETTINGS)
         }
     }
@@ -177,7 +178,7 @@ class StatusScreenTest {
         setList("$others:$me")
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         // Listed, not connected, and no request waiting: nothing will retry, both say so.
-        assertTrue(statusDetail(activity), statusDetail(activity).contains("Resume didn't complete"))
+        assertTrue(statusDetail(activity), statusDetail(activity).contains("Didn't resume"))
         val block = statusBlock(activity)
         val posted = notifications.getNotification(Pause.NOTIFICATION_ID)
         assertEquals(StatusNotifications.RESUME_STALLED, notificationText())
@@ -199,7 +200,7 @@ class StatusScreenTest {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(32))
         val due = statusBlock(activity)
         assertTrue(before !== due)
-        assertTrue(statusDetail(activity), statusDetail(activity).contains("timer is due"))
+        assertTrue(statusDetail(activity), statusDetail(activity).contains("Timer done"))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMinutes(2))
         assertSame(due, statusBlock(activity))
     }
@@ -211,7 +212,7 @@ class StatusScreenTest {
         Pause.begin(ctx)
         setList("$others:$me")
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        views(activity).filterIsInstance<Button>().first { it.text == "Resume protection" }.performClick()
+        views(activity).filterIsInstance<Button>().first { it.text == "Resume" }.performClick()
         assertEquals(others, list())
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(Pause.REBIND_GAP_MS))
         assertEquals("$others:$me", list())

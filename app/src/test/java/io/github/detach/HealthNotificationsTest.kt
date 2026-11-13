@@ -50,7 +50,7 @@ class HealthNotificationsTest {
         health.igEval(false)
 
         val notification = alert()
-        assertEquals("Protection needs a check", notification.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Check protection", notification.extras.getString(Notification.EXTRA_TITLE))
         assertTrue(notification.extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("Open diagnostics"))
         assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
         assertTrue(notification.flags and Notification.FLAG_LOCAL_ONLY != 0)
@@ -67,7 +67,7 @@ class HealthNotificationsTest {
         assertNotNull(notification.publicVersion)
         val publicText = notification.publicVersion.extras.toString()
         listOf("Instagram", "YouTube", Targets.INSTAGRAM, Targets.YOUTUBE).forEach { assertFalse(publicText.contains(it)) }
-        assertEquals("Open Detach to review protection.", notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+        assertEquals("Open Detach", notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
     }
 
     @Test fun `health alerts require sufficient failed observations`() {

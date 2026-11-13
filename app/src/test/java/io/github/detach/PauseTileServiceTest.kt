@@ -102,7 +102,7 @@ class PauseTileServiceTest {
         val activity = Robolectric.buildActivity(PauseActivity::class.java, PauseTileService.target(context)).setup().get()
         val button = activity.window.decorView.let { root ->
             fun find(view: android.view.View): Button? = when (view) {
-                is Button -> view.takeIf { it.text == "Pause protection" }
+                is Button -> view.takeIf { it.text == "Pause" }
                 is android.view.ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { find(view.getChildAt(it)) }
                 else -> null
             }
