@@ -373,15 +373,13 @@ class InstagramRules(
                 ?.let { bubble -> s.all.filter { it.onScreen && it.r.contains(bubble.r) && it.r.width() >= s.bounds.width() * 0.9 }
                     .minByOrNull { it.r.height() } }
 
-    private fun isHomeFeed(s: Snap): Boolean =
-        s.visibleId("title_logo") != null ||
-            s.anyVisible { it.desc.equals("Instagram Home Feed", true) } ||
-            storiesRow(s) != null ||
-            s.visibleId("row_feed_profile_header") != null
-
-    /** A selected, visible Home tab remains the reliable Home signal after the feed scrolls. */
+    /**
+     * A selected, visible Home tab remains the reliable Home signal after the feed scrolls.
+     * [selectedTab] already found it by its id or, if that id changed, by its label, so no
+     * Home-specific id is required here; the visible tab bar keeps full-screen pages out.
+     */
     private fun homeWithSelectedTab(s: Snap, tab: Tab): Boolean =
-        tab == Tab.HOME && tabBarTop(s) != null && (isHomeFeed(s) || s.visibleId("feed_tab") != null)
+        tab == Tab.HOME && tabBarTop(s) != null
 
     /**
      * Right after Instagram starts, its tab bar can be on screen with no tab marked as selected

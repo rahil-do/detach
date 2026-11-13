@@ -69,6 +69,21 @@ class DetachService : AccessibilityService() {
         runCatching { evaluate() }
     }
 
+    private val grantExpiry = Runnable { requestEval(immediate = true) }
+
+    /**
+     * Back from the lock screen: System UI polling stops while locked, and the app underneath
+     * (for example Instagram left on Reels) may send no event of its own after the unlock.
+     * Broadcast-driven, so nothing runs while the phone stays locked.
+     */
+    private var screenReceiverRegistered = false
+    internal val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (pausing || !::worker.isInitialized) return
+            if (interactiveAndUnlocked()) requestEval(immediate = true)
+        }
+    }
+
     private val watchdog = object : Runnable {
         override fun run() {
             if (pausing || !coverOn && !guardOn) return
@@ -130,6 +145,15 @@ class DetachService : AccessibilityService() {
         thread = HandlerThread("detach").also { it.start() }
         worker = Handler(thread.looper)
         updateEventFilter()
+        if (!screenReceiverRegistered) {
+            val screen = IntentFilter().apply {
+                addAction(Intent.ACTION_USER_PRESENT)
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(screenReceiver, screen, RECEIVER_NOT_EXPORTED)
+            else registerReceiver(screenReceiver, screen)
+            screenReceiverRegistered = true
+        }
 
         if (BuildConfig.DEBUG) {
             val filter = IntentFilter().apply {
@@ -300,6 +324,11 @@ class DetachService : AccessibilityService() {
         requestEval(immediate = windowChanged, gap = gap)
     }
 
+    private fun interactiveAndUnlocked(): Boolean = runCatching {
+        getSystemService(android.os.PowerManager::class.java)?.isInteractive == true &&
+            getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == false
+    }.getOrDefault(true)
+
     /** Package of the focused window. Only the name is read, never its content. */
     private fun foreground(): String? = rootInActiveWindow?.packageName?.toString()
 
@@ -376,7 +405,10 @@ class DetachService : AccessibilityService() {
             hideCover()
             hideGuard()
             pending = null
-            requestEval(250)
+            // A shade or dialog over an unlocked phone can close without an event from the app
+            // under it, so look again. Not while the screen is off or the keyguard is up: no
+            // polling then, and the app's own window event after the unlock re-evaluates.
+            if (interactiveAndUnlocked()) requestEval(250)
             return
         }
         if (root == null || pkg !in Targets.READABLE) {
@@ -405,7 +437,12 @@ class DetachService : AccessibilityService() {
             pending = null
             ig.reset()
             val snap = Snap(root, w, h)
-            if (Guard.isProtectedScreen(snap) && !Guard.isGranted()) showGuard(pkg!!, win) else hideGuard()
+            val protectedScreen = Guard.isProtectedScreen(snap)
+            if (protectedScreen && !Guard.isGranted()) showGuard(pkg!!, win) else hideGuard()
+            // Granted: look again the moment the grant ends, so a page left open (no new
+            // events) is covered again on time.
+            worker.removeCallbacks(grantExpiry)
+            if (protectedScreen && Guard.isGranted()) worker.postDelayed(grantExpiry, Guard.grantRemainingMs() + GRANT_EXPIRY_SLACK_MS)
             return
         }
         hideGuard()
@@ -685,6 +722,9 @@ class DetachService : AccessibilityService() {
         /** While a cover/panel is up, how often to check the app is still in front. */
         const val WATCHDOG_MS = 120L
 
+        /** After a Settings grant ends, how much later its page is evaluated again. */
+        internal const val GRANT_EXPIRY_SLACK_MS = 50L
+
         /** When to look again for a selected app that isn't the active window yet. */
         internal val FOREGROUND_CHECKS_MS = longArrayOf(50, 150, 300, 600, 1000)
 
@@ -745,6 +785,10 @@ class DetachService : AccessibilityService() {
         // (During a pause this leaves the "paused until…" notification alone.)
         Pause.refreshNotification(this)
         runCatching { unregisterReceiver(inspectReceiver) }
+        if (screenReceiverRegistered) {
+            runCatching { unregisterReceiver(screenReceiver) }
+            screenReceiverRegistered = false
+        }
         super.onDestroy()
     }
 }

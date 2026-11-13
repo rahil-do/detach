@@ -95,6 +95,7 @@ class DetachServiceTest {
 
     @After fun cleanup() {
         Inspector.tracing = false
+        Guard::class.java.getDeclaredField("grantedUntil").apply { isAccessible = true }.setLong(null, 0L)
         service.onDestroy()
         shadowOf(Looper.getMainLooper()).idle()
         ForegroundServiceShadow.activeRoot = null
@@ -426,6 +427,70 @@ class DetachServiceTest {
         assertEquals(150, bounds.left)
         assertEquals(2400, bounds.right)
     }
+
+    private fun phone(interactive: Boolean, keyguardLocked: Boolean) {
+        shadowOf(service.getSystemService(android.os.PowerManager::class.java)).setIsInteractive(interactive)
+        shadowOf(service.getSystemService(android.app.KeyguardManager::class.java)).setKeyguardLocked(keyguardLocked)
+    }
+
+    @Test fun `System UI in front re-checks while unlocked but never polls while off or locked`() {
+        phone(interactive = true, keyguardLocked = false)
+        foreground(Screen("com.android.systemui"))
+        evaluate()
+        var reads = ForegroundServiceShadow.rootReads
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        // A shade over an unlocked phone can close without an event: it is looked at again.
+        assertTrue(ForegroundServiceShadow.rootReads >= reads + 7)
+        for ((interactive, locked) in listOf(false to true, true to true, false to false)) {
+            phone(interactive, locked)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+            reads = ForegroundServiceShadow.rootReads
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(5))
+            assertEquals("interactive=$interactive locked=$locked", reads, ForegroundServiceShadow.rootReads)
+            // The next event (for example the app's own window after the unlock) evaluates again.
+            phone(interactive = true, keyguardLocked = false)
+            evaluate()
+        }
+        phone(interactive = true, keyguardLocked = false)
+    }
+
+    @Test fun `unlocking re-evaluates at once even if the app underneath sends no event`() {
+        phone(interactive = false, keyguardLocked = true)
+        foreground(Screen("com.android.systemui"))
+        evaluate()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        val receiver = DetachService::class.java.getDeclaredField("screenReceiver").apply { isAccessible = true }
+            .get(service) as android.content.BroadcastReceiver
+        // Screen on but still locked: nothing runs.
+        phone(interactive = true, keyguardLocked = true)
+        var reads = ForegroundServiceShadow.rootReads
+        receiver.onReceive(service, android.content.Intent(android.content.Intent.ACTION_SCREEN_ON))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+        assertEquals(reads, ForegroundServiceShadow.rootReads)
+        // Unlocked straight into an app that stays silent: evaluated immediately.
+        phone(interactive = true, keyguardLocked = false)
+        foreground(Screen("com.instagram.android"))
+        reads = ForegroundServiceShadow.rootReads
+        receiver.onReceive(service, android.content.Intent(android.content.Intent.ACTION_USER_PRESENT))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(ForegroundServiceShadow.rootReads > reads)
+    }
+
+    @Test fun `a protected Settings page left open is covered again when the grant ends`() {
+        Guard::class.java.getDeclaredField("grantedUntil").apply { isAccessible = true }.setLong(null, 0L)
+        foreground(Screen("com.android.settings").node(text = "Detach").node(text = "Uninstall"))
+        Guard.grant()
+        evaluate()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(value("guardOn") as Boolean)
+        // No event at all while the page stays open: the grant's end alone brings the panel back.
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(119))
+        assertFalse(value("guardOn") as Boolean)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertFalse(Guard.isGranted())
+        assertTrue(value("guardOn") as Boolean)
+    }
+
 }
 
 @RunWith(RobolectricTestRunner::class)

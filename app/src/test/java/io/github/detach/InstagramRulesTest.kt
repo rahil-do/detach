@@ -55,6 +55,22 @@ class InstagramRulesTest {
         assertEquals(2509, d.cover!!.bottom)
     }
 
+    @Test fun `a scrolled Home feed stays covered when only the Home tab's id has changed`() {
+        // The Home tab is recognised by its label; no Home header or feed_tab id is left.
+        val s = instagram()
+        listOf("renamed_home_tab" to "Home", "clips_tab" to "Reels", "direct_tab" to "Message",
+            "search_tab" to "Search and explore", "profile_tab" to "Profile").forEachIndexed { i, (id, label) ->
+            s.node(id = id, desc = label, l = i * 244, t = 2509, r = (i + 1) * 244, b = 2644, clickable = true, selected = i == 0)
+        }
+        s.node(id = "feed_media_container", l = 0, t = 0, r = W, b = 2509)
+        val r = rules()
+        assertEquals(InstagramRules.Tab.HOME, r.selectedTab(s.snap()))
+        val d = r.evaluate(s.snap(), 0)
+        assertNotNull(d.cover)
+        assertTrue(d.coverIsHomeFeed)
+        assertEquals(2509, d.cover!!.bottom)
+    }
+
     @Test fun `Home feed is left available when its individual switch is off`() {
         val r = rules()
         Settings(ctx).igFeed = false

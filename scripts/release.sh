@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-[[ -f keystore.properties ]] || { echo "keystore.properties missing: release would be debug-signed. See docs/MAINTAINING.md." >&2; exit 1; }
+[[ -f keystore.properties ]] || { echo "keystore.properties missing: release APK would be unsigned. See docs/MAINTAINING.md." >&2; exit 1; }
 sdk=$(grep -E '^sdk.dir=' local.properties | cut -d= -f2-)
 bt=$(ls -d "$sdk"/build-tools/* | sort -V | tail -1)
 

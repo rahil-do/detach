@@ -15,7 +15,7 @@ import android.widget.TextView
 /**
  * Opened from the "Detach is protected" panel.
  *  - Password set: fingerprint (if enrolled) or the password.
- *  - No password, fingerprint enrolled: fingerprint.
+ *  - No password, fingerprint enrolled: fingerprint only. If it can't be used right now, try again.
  *  - Neither: a 30-second wait.
  * On success, Detach's system pages are open for 2 minutes.
  */
@@ -92,6 +92,7 @@ class UnlockActivity : Activity() {
                 ok.text = "Unlock"
                 ok.setOnClickListener { askBiometric() }
             }
+            Auth.biometricEnrolled(this) -> fingerprintUnavailable()
             else -> startWait()
         }
         col.addView(buttons)
@@ -110,9 +111,22 @@ class UnlockActivity : Activity() {
 
     private fun askBiometric() = Auth.confirm(
         this, "Unlock Detach settings",
-        // "Use password", or the fingerprint can't be used right now.
-        fallback = { input?.let { showKeyboard(it) } ?: startWait() },
+        // "Use password", or the fingerprint can't be used right now. Without a password, only a
+        // phone with no fingerprint at all gets the wait; a temporary error means try again.
+        fallback = {
+            input?.let { showKeyboard(it) }
+                ?: if (Auth.biometricEnrolled(this)) fingerprintUnavailable() else startWait()
+        },
     ) { granted() }
+
+    /** No password, and the enrolled fingerprint can't be used right now: no wait, just retry. */
+    private fun fingerprintUnavailable() {
+        if (timer != null) return
+        msg.text = "Fingerprint unavailable. Try again."
+        ok.isEnabled = true
+        ok.text = "Try again"
+        ok.setOnClickListener { askBiometric() }
+    }
 
     private fun showKeyboard(field: EditText) {
         field.requestFocus()

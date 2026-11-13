@@ -98,7 +98,7 @@ Choose your payment and banking apps by name/logo in Detach. Google Pay India, P
 Foreground app detection is a new, separate **off-by-default** opt-in, even if an older version had Usage Access. Enable **Resume when Instagram or YouTube opens**, review the disclosure and grant Usage Access through Android Settings; the USB grant is also required. Return and explicitly enable the option after setup. A private local foreground monitor checks package events only during pauses while unlocked, with no saved history or network access. Revoking Usage Access or turning the feature off stops monitoring. Timer-only mode needs no Usage Access. See [automatic payment resume](automatic-payment-resume.md) for timing, lifecycle and bank-detection limits.
 
 ### Recommended next steps
-- **Set a password** in Detach (Password lock → Set password). Without one, the "Detach is protected" screen only asks for your fingerprint, or for a 30-second wait if the phone has none.
+- **Set a password** in Detach (Password lock → Set password). Without one, the "Detach is protected" screen only asks for your fingerprint (if it can't be used right now, try again), or for a 30-second wait if the phone has no fingerprint enrolled.
 - **Exclude Detach from battery optimisation** if your phone is known for killing background apps (Xiaomi, Oppo, Vivo, Realme, OnePlus, Samsung): Settings → Apps → Detach → Battery → **Unrestricted**. Accessibility apps are normally left alone, but these phones sometimes stop them anyway. On phones with near-stock Android this usually isn't needed.
 
 ---
@@ -113,7 +113,7 @@ If Android says **"App not installed: package conflicts"**, the new APK was sign
 
 Because of the protection screen, uninstalling Detach takes one extra step:
 1. Settings → Apps → **Detach** → the **"Detach is protected"** screen appears.
-2. Tap **Unlock** / **Enter password** (or **Wait 30 seconds** if there's no password or fingerprint), then unlock.
+2. Tap **Unlock** / **Enter password** (or **Wait 30 seconds** if there's no password and no fingerprint enrolled), then unlock.
 3. You now have 2 minutes: tap **Uninstall**.
 
 Forgot the password? From a computer: `adb uninstall io.github.detach`.

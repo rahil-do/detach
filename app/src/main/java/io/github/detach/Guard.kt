@@ -28,6 +28,9 @@ object Guard {
 
     fun isGranted() = SystemClock.elapsedRealtime() < grantedUntil
 
+    /** How long the current grant has left (0 if none). */
+    fun grantRemainingMs(): Long = (grantedUntil - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+
     fun grant() {
         grantedUntil = SystemClock.elapsedRealtime() + GRANT_MS
     }

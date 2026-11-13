@@ -74,6 +74,7 @@ A lightweight **foreground watchdog** runs only while an overlay is visible. It 
         │  one immutable timer; optional consented package monitor
         ▼
  Valid due timer (not while off/locked) OR opt-in observed social app → one automatic enable attempt
+        │  with Usage Access: one package-only query first; defer while a selected app is in front
         │  requires secure-settings grant; otherwise reminder/manual Settings
         │  boot/update revoke auto authority; app opens never renew it
         ▼

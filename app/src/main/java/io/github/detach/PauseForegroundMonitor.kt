@@ -33,21 +33,24 @@ internal class ForegroundPackages {
      * Unlike the old 30 second hint this lasts until the app's own background event (or until
      * observation is interrupted, which clears everything): Instagram and YouTube are
      * effectively single-activity apps, so a user scrolling in them produces no new events, and
-     * a payment hold that clears late must still find them in front. It never outlives a
-     * payment hold that ends by timeout rather than by the payment app's own background event:
-     * that app may still be on screen (split screen), so only a fresh foreground counts then.
+     * a payment hold that clears late must still find them in front.
      */
     var social: String? = null
         private set
-    /** Selected apps observed in front, held until Android reports them in the background. */
+    /**
+     * Selected apps observed in front, held until Android reports them in the background. The
+     * value is when the hold was last confirmed: its foreground event, or the last [recheck].
+     */
     private val payments = mutableMapOf<String, Long>()
     /**
      * The selected app that started the pause, read from the active window. Its own foreground
      * event predates the pause, so it is held exactly like [payments]: only its own background
-     * event or [PAYMENT_HOLD_MS] releases it. An Instagram/YouTube foreground does not: in split
-     * screen (multi-resume) the payment app stays resumed and on screen next to Instagram.
+     * event releases it. An Instagram/YouTube foreground does not: in split screen
+     * (multi-resume) the payment app stays resumed and on screen next to Instagram.
      */
     private val seeds = mutableMapOf<String, Long>()
+    /** Where each held app's own events begin: its foreground event, or the pause start for a seed. */
+    private val heldSince = mutableMapOf<String, Long>()
     /** Unobserved starting-package hints: only [STATE_MAX_MS], like any other unconfirmed hint. */
     private val hints = mutableMapOf<String, Long>()
 
@@ -56,6 +59,7 @@ internal class ForegroundPackages {
             UsageEvents.Event.MOVE_TO_FOREGROUND -> {
                 if (packageName in paymentPackages) {
                     payments[packageName] = observedAt
+                    heldSince[packageName] = observedAt
                     seeds.remove(packageName)
                     hints.remove(packageName)
                 }
@@ -64,25 +68,30 @@ internal class ForegroundPackages {
             UsageEvents.Event.MOVE_TO_BACKGROUND -> {
                 payments.remove(packageName)
                 seeds.remove(packageName)
+                heldSince.remove(packageName)
                 hints.remove(packageName)
                 if (social == packageName) social = null
             }
         }
         payments.keys.retainAll(paymentPackages)
         seeds.keys.retainAll(paymentPackages)
+        heldSince.keys.retainAll(paymentPackages)
         hints.keys.retainAll(paymentPackages)
     }
 
     /**
      * The selected app that started the pause, before any usage event for it is observed (its own
      * foreground event predates the pause). [inFront]: it was read from the active window, so it
-     * is held like an observed foreground until it is observed leaving or the hold ends.
-     * Otherwise the pause came from an event alone, the app may never have been in front, and it
-     * is only a [STATE_MAX_MS] hint.
+     * is held like an observed foreground until it is observed leaving. Otherwise the pause came
+     * from an event alone, the app may never have been in front, and it is only a
+     * [STATE_MAX_MS] hint.
      */
     fun seed(packageName: String, paymentPackages: Set<String>, observedAt: Long, inFront: Boolean) {
         if (packageName !in paymentPackages) return
-        if (inFront) seeds[packageName] = observedAt else hints[packageName] = observedAt
+        if (inFront) {
+            seeds[packageName] = observedAt
+            heldSince[packageName] = observedAt
+        } else hints[packageName] = observedAt
     }
 
     /** The starting apps still held only by inference, with no event of their own observed yet. */
@@ -92,21 +101,40 @@ internal class ForegroundPackages {
     fun socialForeground(): String? = social
 
     /**
+     * Held apps whose hold was last confirmed [PAYMENT_HOLD_MS] or more ago (or in the future,
+     * after a clock change), with where their own events begin. The monitor re-reads each one's
+     * own events from there ([recheck]): a hold never just times out while observation is
+     * continuous, so sitting on one payment screen for a long time never looks like "finished".
+     */
+    fun dueForRecheck(now: Long): Map<String, Long> =
+        (payments.entries + seeds.entries).filter { now - it.value !in 0 until PAYMENT_HOLD_MS }
+            .associate { it.key to (heldSince[it.key] ?: it.value) }
+
+    /**
+     * Result of re-reading a held app's own events: [leftAt] is its background event with no
+     * later foreground (it really left, and is released), or null (still held, confirmed [now]).
+     */
+    fun recheck(packageName: String, leftAt: Long?, paymentPackages: Set<String>, now: Long) {
+        if (leftAt != null) {
+            accept(packageName, UsageEvents.Event.MOVE_TO_BACKGROUND, paymentPackages, leftAt)
+            return
+        }
+        if (packageName in payments) payments[packageName] = now
+        if (packageName in seeds) seeds[packageName] = now
+    }
+
+    /**
      * A selected app (UPI, bank or an app the owner pays from) is still in front. Its evidence
-     * lasts until Android reports it moved to the background, not a fixed 30 seconds, so sitting
-     * on one payment or PIN screen does not look like "payment finished". This is only safe
+     * lasts until Android reports it moved to the background, not a fixed time, so sitting on
+     * one payment or PIN screen does not look like "payment finished". This is only safe
      * because the monitor clears all state whenever observation is interrupted (screen off or
      * locked, or a gap between queries longer than [PauseForegroundMonitor.LOOKBACK_MS]), and
-     * [PAYMENT_HOLD_MS] still bounds a missed background event. Unobserved hints from [seed]
-     * keep the short [STATE_MAX_MS] lifetime.
+     * re-reads a long hold's own events ([dueForRecheck]) for a background event stored late.
+     * The pause's automatic-authority deadline remains the outer bound. Unobserved hints from
+     * [seed] keep the short [STATE_MAX_MS] lifetime.
      */
     fun paymentForegroundAt(now: Long): Boolean {
-        val heldOut = payments.entries.removeAll { now - it.value !in 0..PAYMENT_HOLD_MS } or
-            seeds.entries.removeAll { now - it.value !in 0..PAYMENT_HOLD_MS }
         hints.entries.removeAll { now - it.value !in 0..STATE_MAX_MS }
-        // A hold that timed out was never seen leaving: an Instagram/YouTube foreground observed
-        // while it was held may sit next to it in split screen, so it no longer counts.
-        if (heldOut) social = null
         return payments.isNotEmpty() || seeds.isNotEmpty() || hints.isNotEmpty()
     }
 
@@ -114,12 +142,13 @@ internal class ForegroundPackages {
         social = null
         payments.clear()
         seeds.clear()
+        heldSince.clear()
         hints.clear()
     }
 
     companion object {
         internal const val STATE_MAX_MS = 30_000L
-        /** Upper bound for continuously observed selected-app evidence without a new event. */
+        /** How often a continuously observed hold re-reads its own events for a missed background event. */
         internal const val PAYMENT_HOLD_MS = 10 * 60_000L
     }
 }
@@ -140,7 +169,9 @@ internal class ForegroundPackages {
  *   authority are all still valid, and otherwise stops at once. Android 12+ may refuse the
  *   restarted service's foreground start; it then stops cleanly and the timer remains.
  * - Battery: one bounded Usage Events query about every [POLL_MS], only while the screen is on
- *   and unlocked, on a private thread, with no wake lock. Nothing runs while off or locked.
+ *   and unlocked, on a private thread, with no wake lock (plus, for a selected app held in
+ *   front for [ForegroundPackages.PAYMENT_HOLD_MS], one re-read of its own events each time).
+ *   Nothing runs while off or locked.
  */
 class PauseForegroundMonitor : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -375,6 +406,18 @@ class PauseForegroundMonitor : Service() {
         applied.values.removeAll { it < now - QUERY_OVERLAP_MS }
         newestApplied.values.removeAll { it < now - QUERY_OVERLAP_MS }
         if (!eligible() || checkedToken != token || !interactiveAndUnlocked()) return
+        // A hold never times out while observation is continuous. Once it has gone
+        // PAYMENT_HOLD_MS without a new event, that app's own events are read again from its
+        // foreground event (as the seeded first query does), so only a real background event,
+        // perhaps stored too late for the overlap above, releases it.
+        for ((held, since) in packages.dueForRecheck(now)) {
+            val left = runCatching { leftSince(held, since, now) }.getOrElse {
+                stopMonitoring()
+                return
+            }
+            packages.recheck(held, left, paymentPackages, now)
+        }
+        if (!eligible() || checkedToken != token) return
         val paymentForeground = packages.paymentForegroundAt(now)
         paymentCheckedAt = SystemClock.elapsedRealtime()
         paymentEvidenceAt = if (paymentForeground) paymentCheckedAt else Long.MIN_VALUE
@@ -389,6 +432,25 @@ class PauseForegroundMonitor : Service() {
         // check while a poll is already queued (the main thread's removeCallbacks races it).
         handler.removeCallbacks(poll)
         handler.postDelayed(poll, POLL_MS)
+    }
+
+    /**
+     * Worker thread: [packageName]'s own last background event in [since]..[now] when no later
+     * foreground event follows it, or null if it did not leave. Throws if the query fails.
+     */
+    private fun leftSince(packageName: String, since: Long, now: Long): Long? {
+        val events = getSystemService(UsageStatsManager::class.java)?.queryEvents(minOf(since, now), now)
+            ?: error("no usage events")
+        var left: Long? = null
+        while (events.hasNextEvent()) {
+            events.getNextEvent(eventBuffer)
+            if (eventBuffer.packageName != packageName) continue
+            when (eventBuffer.eventType) {
+                UsageEvents.Event.MOVE_TO_FOREGROUND -> left = null
+                UsageEvents.Event.MOVE_TO_BACKGROUND -> left = eventBuffer.timeStamp
+            }
+        }
+        return left
     }
 
     private fun showForegroundNotification() {
@@ -428,6 +490,12 @@ class PauseForegroundMonitor : Service() {
         handler.removeCallbacksAndMessages(null)
         val startId = lastStartId
         val finish = Runnable {
+            // A newer valid start reached onStartCommand before this ran (worker stop posted
+            // here, start delivered first): it owns the service and its notification now.
+            if (lastStartId != startId && active === this && !stopping) {
+                Pause.refreshNotification(this)
+                return@Runnable
+            }
             runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
             // Only up to the newest start this instance has seen: a newer start still on its
             // way re-validates (and stops again if it is not needed).
@@ -579,6 +647,59 @@ class PauseForegroundMonitor : Service() {
             val since = monitor.observingSince
             val settling = since != Long.MIN_VALUE && now - since in 0..POLL_MS * 2 && !monitor.settled()
             return settling || now - monitor.paymentEvidenceAt in 0..POLL_MS * 2 && now - monitor.paymentCheckedAt in 0..POLL_MS * 2
+        }
+
+        /** How far before the pause start [paymentLeftInFront] reads, for the starting app's own foreground event. */
+        internal const val PAYMENT_CHECK_SLACK_MS = 60_000L
+        /** How long a [paymentLeftInFront] answer of "in front" is reused instead of querying again. */
+        internal const val PAYMENT_CHECK_REUSE_MS = 10_000L
+        @Volatile private var paymentLeftFor: String? = null
+        @Volatile private var paymentLeftAt = Long.MIN_VALUE
+
+        /**
+         * Checked once before every automatic resume (timer, locked fallback, app detection),
+         * also when app detection is off: Usage Access granted, one bounded Usage Events query
+         * (back to just before the pause start, at most [ForegroundPackages.PAYMENT_HOLD_MS]),
+         * package names only. True when a selected app's last foreground event in that window has
+         * no later background event, or when the app that started the pause from its own window
+         * has no event at all since. Never polls: the caller defers and asks again later. Without
+         * Usage Access, or if the query fails, nothing is known and the timer resumes as in
+         * timer-only mode. A selected app that has sat on one screen for longer than the window
+         * is not seen either; then only app detection, which holds it continuously, can wait.
+         * Runs on the caller's thread (one query).
+         */
+        internal fun paymentLeftInFront(context: Context): Boolean {
+            val app = context.applicationContext
+            val token = Pause.automaticToken(app)
+            val elapsed = SystemClock.elapsedRealtime()
+            if (token != null && token == paymentLeftFor && elapsed - paymentLeftAt in 0..PAYMENT_CHECK_REUSE_MS) return true
+            if (!hasUsageAccess(app)) return false
+            val selected = Settings(app).paymentPackages
+            if (selected.isEmpty()) return false
+            val now = WallClock.now()
+            val started = Pause.startedAt(app)
+            val from = maxOf(started - PAYMENT_CHECK_SLACK_MS, now - ForegroundPackages.PAYMENT_HOLD_MS)
+            if (started <= 0L || from >= now) return false
+            // The end is exclusive: + 1 includes an event stamped this very millisecond.
+            val events = runCatching { app.getSystemService(UsageStatsManager::class.java)?.queryEvents(from, now + 1L) }.getOrNull()
+                ?: return false
+            val last = HashMap<String, Int>()
+            val event = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                val name = event.packageName ?: continue
+                if (name !in selected) continue
+                if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND || event.eventType == UsageEvents.Event.MOVE_TO_BACKGROUND) {
+                    last[name] = event.eventType
+                }
+            }
+            val starting = Pause.startingPaymentPackage(app)?.takeIf { from <= started && Pause.startingPaymentWasInFront(app) }
+            val inFront = last.containsValue(UsageEvents.Event.MOVE_TO_FOREGROUND) || starting != null && starting !in last
+            if (inFront) {
+                paymentLeftFor = token
+                paymentLeftAt = elapsed
+            }
+            return inFront
         }
 
         internal fun stop(context: Context) {

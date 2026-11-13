@@ -47,6 +47,7 @@ class UiTest {
         SystemSettings.Global.putFloat(context.contentResolver, SystemSettings.Global.ANIMATOR_DURATION_SCALE, 0f)
         SystemSettings.Secure.putString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
         Shadow.extract<ShadowBiometricManager>(context.getSystemService(BiometricManager::class.java)).setCanAuthenticate(false)
+        resetGuard()
     }
 
     @Test fun `all three Instagram allowances remain independently editable`() {
@@ -311,6 +312,85 @@ class UiTest {
         timer.invokeFinish()
         assertTrue(action.isEnabled)
         assertEquals("Continue", action.text.toString())
+    }
+
+    private fun resetGuard() =
+        Guard::class.java.getDeclaredField("grantedUntil").apply { isAccessible = true }.setLong(null, 0L)
+
+    @Config(shadows = [BreatherBiometricPrompt::class])
+    @Test fun `a temporary fingerprint error never opens the credential free wait`() {
+        Shadow.extract<ShadowBiometricManager>(context.getSystemService(BiometricManager::class.java)).apply {
+            setCanAuthenticate(true)
+            setAuthenticatorType(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        }
+        val controller = Robolectric.buildActivity(UnlockActivity::class.java).setup()
+        val activity = controller.get()
+        activity.onWindowFocusChanged(true)
+        for (error in listOf(
+            android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE,
+            android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_UNABLE_TO_PROCESS,
+            android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_VENDOR,
+            android.hardware.biometrics.BiometricPrompt.BIOMETRIC_ERROR_NO_SPACE,
+        )) {
+            BreatherBiometricPrompt.callback.onAuthenticationError(error, "Try again later")
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            assertNull("error $error", ReflectionHelpers.getField<CountDownTimer?>(activity, "timer"))
+            val retry = views(activity).filterIsInstance<Button>().first { it.text.toString() == "Try again" }
+            assertTrue(retry.isEnabled)
+            // Trying again asks for the fingerprint again; nothing is granted without it.
+            retry.performClick()
+            assertFalse(Guard.isGranted())
+        }
+        BreatherBiometricPrompt.callback.onAuthenticationSucceeded(null)
+        assertTrue(Guard.isGranted())
+        resetGuard()
+        controller.pause().stop().destroy()
+    }
+
+    @Test fun `an enrolled fingerprint that is unavailable on opening offers a retry instead of the wait`() {
+        Shadow.extract<ShadowBiometricManager>(context.getSystemService(BiometricManager::class.java)).apply {
+            setCanAuthenticate(true)
+            // Robolectric reports a non-zero authenticator type as canAuthenticate's result.
+            setAuthenticatorType(BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE)
+        }
+        val activity = Robolectric.buildActivity(UnlockActivity::class.java).setup().get()
+        assertNull(ReflectionHelpers.getField<CountDownTimer?>(activity, "timer"))
+        assertTrue(views(activity).filterIsInstance<Button>().none { it.text.toString().startsWith("Wait") })
+        val retry = views(activity).filterIsInstance<Button>().first { it.text.toString() == "Try again" }
+        retry.performClick()
+        assertFalse(Guard.isGranted())
+    }
+
+    @Test fun `a password dialog cancelled while its check finishes does not authorize`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        Lock(context).set("dialog-password")
+        val pool = ReflectionHelpers.getField<java.util.concurrent.ExecutorService>(HashWorker, "pool")
+        val release = java.util.concurrent.CountDownLatch(1)
+        val entered = java.util.concurrent.CountDownLatch(1)
+        // Hold the hash worker so the check finishes only after the tap, then cancel right as
+        // its result is queued on the main thread.
+        pool.submit { entered.countDown(); release.await(10, java.util.concurrent.TimeUnit.SECONDS) }
+        assertTrue(entered.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        var authorized = false
+        try {
+            Auth.passwordDialog(activity) { authorized = true }
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            val dialog = ShadowAlertDialog.getLatestAlertDialog()
+            fun descend(view: View): List<View> = listOf(view) + if (view is ViewGroup) {
+                (0 until view.childCount).flatMap { descend(view.getChildAt(it)) }
+            } else emptyList()
+            descend(dialog.window!!.decorView).filterIsInstance<android.widget.EditText>().single().setText("dialog-password")
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            release.countDown()
+            pool.submit {}.get(10, java.util.concurrent.TimeUnit.SECONDS)
+            dialog.cancel()
+            assertFalse(dialog.isShowing)
+        } finally {
+            release.countDown()
+        }
+        pool.submit {}.get(10, java.util.concurrent.TimeUnit.SECONDS)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertFalse(authorized)
     }
 
     @Test fun `leaving unlock cancels the wait instead of completing in the background`() {
