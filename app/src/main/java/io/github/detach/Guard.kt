@@ -144,7 +144,7 @@ class GuardOverlay(
                 biometric -> "your fingerprint"
                 else -> "a 30-second wait"
             }
-            addView(ui.text("Turning Detach off, force-stopping, clearing or uninstalling it needs $confirmation.", 15f, ui.sub).apply {
+            addView(ui.text("Turning off or removing Detach needs $confirmation.", 15f, ui.sub).apply {
                 gravity = Gravity.CENTER
                 setPadding(0, 0, 0, ui.dp(24))
             })

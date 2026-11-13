@@ -30,11 +30,19 @@ class ManifestTest {
     @Test fun `only the launcher screen can be started by other apps`() {
         val exported = buildList {
             info.activities.orEmpty().filter { it.exported }.forEach { add(it.name) }
-            info.services.orEmpty().filter { it.exported }.forEach { add(it.name) }
+            info.services.orEmpty().filter { it.exported && it.permission == null }.forEach { add(it.name) }
             info.receivers.orEmpty().filter { it.exported }.forEach { add(it.name) }
             info.providers.orEmpty().forEach { add(it.name) }
         }
         assertEquals(listOf("io.github.detach.MainActivity"), exported)
+    }
+
+    @Test fun `the payment tile is the only exported service and only System UI can bind it`() {
+        val exported = info.services.orEmpty().filter { it.exported }
+        assertEquals(listOf("io.github.detach.PauseTileService"), exported.map { it.name })
+        assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", exported.single().permission)
+        val pause = info.activities.orEmpty().single { it.name == "io.github.detach.PauseActivity" }
+        assertFalse(pause.exported)
     }
 
     @Test fun `the accessibility service can only be bound by Android`() {
@@ -111,10 +119,21 @@ class ManifestTest {
         assertEquals(setOf("android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_SPECIAL_USE"),
             permissions.filter { it.startsWith("android.permission.FOREGROUND_SERVICE") }.toSet())
         assertFalse("android.permission.QUERY_ALL_PACKAGES" in permissions)
-        assertEquals(setOf("io.github.detach.DetachService", "io.github.detach.PauseForegroundMonitor"),
+        assertEquals(setOf("io.github.detach.DetachService", "io.github.detach.PauseForegroundMonitor", "io.github.detach.PauseTileService"),
             info.services.orEmpty().map { it.name }.toSet())
         val monitor = info.services.orEmpty().single { it.name.endsWith(".PauseForegroundMonitor") }
         assertFalse(monitor.exported)
+    }
+
+    @Test fun `swiping Detach out of Recents does not stop payment pause app detection`() {
+        // With stopWithTask, removing the task stopped the monitor and Android then killed the
+        // process, so Instagram/YouTube could never resume protection (seen on a real phone).
+        val monitor = info.services.orEmpty().single { it.name.endsWith(".PauseForegroundMonitor") }
+        assertEquals(0, monitor.flags and android.content.pm.ServiceInfo.FLAG_STOP_WITH_TASK)
+        val manifest = java.io.File("src/main/AndroidManifest.xml").takeIf { it.exists() }
+            ?: java.io.File("app/src/main/AndroidManifest.xml")
+        val declaration = Regex("<service[^>]*PauseForegroundMonitor[^>]*>").find(manifest.readText())!!.value
+        assertTrue(declaration.contains("android:stopWithTask=\"false\""))
     }
 
     @Test fun `permission surface is limited to local authentication reminders and explicit resume`() {

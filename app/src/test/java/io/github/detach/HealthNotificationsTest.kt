@@ -50,7 +50,7 @@ class HealthNotificationsTest {
         health.igEval(false)
 
         val notification = alert()
-        assertEquals("Protection needs a check", notification.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Check protection", notification.extras.getString(Notification.EXTRA_TITLE))
         assertTrue(notification.extras.getString(Notification.EXTRA_TEXT).orEmpty().contains("Open diagnostics"))
         assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
         assertTrue(notification.flags and Notification.FLAG_LOCAL_ONLY != 0)
@@ -67,7 +67,7 @@ class HealthNotificationsTest {
         assertNotNull(notification.publicVersion)
         val publicText = notification.publicVersion.extras.toString()
         listOf("Instagram", "YouTube", Targets.INSTAGRAM, Targets.YOUTUBE).forEach { assertFalse(publicText.contains(it)) }
-        assertEquals("Open Detach to review protection.", notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
+        assertEquals("Open Detach", notification.publicVersion.extras.getString(Notification.EXTRA_TEXT))
     }
 
     @Test fun `health alerts require sufficient failed observations`() {
@@ -203,9 +203,18 @@ class HealthNotificationsTest {
     @Test fun `legacy app specific alerts are removed when health is initialised`() {
         manager.notify("ig".hashCode(), Notification.Builder(context, "health").setSmallIcon(R.drawable.ic_notification).build())
         manager.notify("yt".hashCode(), Notification.Builder(context, "health").setSmallIcon(R.drawable.ic_notification).build())
+        // Once per process: a fresh process starts with nothing cleared yet.
+        Health::class.java.getDeclaredField("legacyCleared").apply { isAccessible = true }.setBoolean(null, false)
         Health(context)
 
         assertNull(notifications.getNotification("ig".hashCode()))
         assertNull(notifications.getNotification("yt".hashCode()))
+    }
+
+    @Test fun `building health again for each status render does not call into the notification service`() {
+        Health(context)
+        manager.notify("ig".hashCode(), Notification.Builder(context, "health").setSmallIcon(R.drawable.ic_notification).build())
+        repeat(3) { Health(context).report() }
+        assertNotNull(notifications.getNotification("ig".hashCode()))
     }
 }

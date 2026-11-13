@@ -82,6 +82,8 @@ object PaymentAppPicker {
         bitmap
     }.getOrNull()
 
+    internal const val HINT = "Detach pauses while these are open. Include apps you pay from."
+
     private val PACKAGE_LABEL = Regex("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+")
 
     private class Session(private val activity: Activity, private var onSaved: (() -> Unit)?) :
@@ -150,10 +152,14 @@ object PaymentAppPicker {
             override fun afterTextChanged(text: Editable?) = Unit
         }
         private val dialog = AlertDialog.Builder(activity)
-            .setTitle("Auto-pause apps")
+            .setTitle("Payment apps")
             .setView(LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0)
+                addView(ui.note(HINT).apply {
+                    tag = "payment-app-hint"
+                    setPadding(0, 0, 0, ui.dp(10))
+                })
                 addView(search)
                 addView(summary)
                 addView(android.widget.FrameLayout(activity).apply {
@@ -200,7 +206,7 @@ object PaymentAppPicker {
             loaded = result.isSuccess
             apps = result.getOrDefault(emptyList())
             filter()
-            if (!loaded) status.text = "Couldn’t load installed apps. Please try again."
+            if (!loaded) status.text = "Couldn’t load apps. Try again."
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = loaded
         }
 
@@ -212,7 +218,7 @@ object PaymentAppPicker {
         }
 
         private fun updateSummary() {
-            summary.text = "${selected.size} selected. Saved choices for unavailable apps are kept."
+            summary.text = "${selected.size} selected"
         }
 
         private fun requestIcon(app: App) {

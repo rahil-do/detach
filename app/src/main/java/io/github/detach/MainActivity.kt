@@ -4,9 +4,12 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -14,7 +17,6 @@ import android.view.ViewTreeObserver
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
-import android.widget.TextView
 import android.widget.Toast
 import android.provider.Settings as SysSettings
 
@@ -91,26 +93,66 @@ class MainActivity : Activity() {
         }
     }
 
+    /** One-shot: the pause's end time was reached (the status text changes once). */
     private val pauseTick = Runnable {
         Pause.resumeIfDue(this)
         render()
     }
 
-    private val connectionTick = Runnable { render() }
+    /** One-shot: the breather ended. */
     private val breatherTick = Runnable { render() }
+
+    /**
+     * One-shot, [Pause.RECONNECT_CHECK_MS] after the screen started showing that Android has
+     * not connected Detach although it is listed as enabled: force a rebind (bounded in Pause).
+     */
+    private val reconnectCheck = Runnable { Pause.recoverStuckReconnect(this) }
+
+    /** Whatever the status shows was rendered for this state; anything else re-renders once. */
+    private var renderedStatus: String? = null
+
+    /** Pause, service and detection changes (see StatusEvents): re-render only if the status changed. */
+    private val statusChanged = Runnable { if (visitActive && rendered && statusKey() != renderedStatus) render() }
+
+    /** Detach added to or removed from the enabled accessibility services, by Android, the owner or Detach. */
+    private val servicesChanged = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = statusChanged.run()
+    }
 
     override fun onResume() {
         super.onResume()
         visitActive = true
+        StatusEvents.add(statusChanged)
+        runCatching {
+            contentResolver.registerContentObserver(
+                SysSettings.Secure.getUriFor(SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, servicesChanged,
+            )
+        }
+        // Opening Detach restores whatever a force-stop removed: the timer, the status
+        // notification, and app detection for the same pause (before its timer is due).
         Pause.resumeIfDue(this)
+        rearmDetection()
         Pause.refreshNotification(this)
+        PauseForegroundMonitor.clearOrphanNotification(this, fromVisibleActivity = true)
         render()
     }
 
+    /**
+     * While Detach is in front Android allows it to start the optional monitor, so app detection
+     * lost during this pause (process killed, swiped away on an older build, start refused, or
+     * opt-in/Usage Access completed only now) is re-attached to the pause's existing authority.
+     * Before the timer is due only: opening Detach never spends due timer authority.
+     */
+    private fun rearmDetection() {
+        if (Pause.isPending(this) && !Pause.isExpired(this)) PauseForegroundMonitor.reattach(this)
+    }
+
     override fun onPause() {
+        StatusEvents.remove(statusChanged)
+        runCatching { contentResolver.unregisterContentObserver(servicesChanged) }
         root.removeCallbacks(pauseTick)
-        root.removeCallbacks(connectionTick)
         root.removeCallbacks(breatherTick)
+        root.removeCallbacks(reconnectCheck)
         super.onPause()
     }
 
@@ -133,8 +175,8 @@ class MainActivity : Activity() {
         val anchorOffset = anchor?.let { previousY - it.top } ?: 0
         android.transition.TransitionManager.endTransitions(root)
         root.removeCallbacks(pauseTick)
-        root.removeCallbacks(connectionTick)
         root.removeCallbacks(breatherTick)
+        root.removeCallbacks(reconnectCheck)
         root.removeAllViews()
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -155,14 +197,17 @@ class MainActivity : Activity() {
             if (rendered && currentStatus != lastStatus && !revealDiagnostics) Motion.enter(this)
         })
         lastStatus = currentStatus
+        renderedStatus = statusKey()
         if (paused && !Pause.isExpired(this)) {
-            root.postDelayed(pauseTick, (Pause.until(this) - System.currentTimeMillis()).coerceAtLeast(0) + 1000)
+            root.postDelayed(pauseTick, (Pause.until(this) - WallClock.now()).coerceAtLeast(0) + 1000)
         }
-        if (serviceEnabled() && !DetachService.isRunning) root.postDelayed(connectionTick, 1000)
+        // No polling while waiting for Android: the service connecting (or the list changing)
+        // re-renders through StatusEvents and the settings observer. One bounded check only.
+        if (Pause.waitingForReconnect(this)) root.postDelayed(reconnectCheck, Pause.RECONNECT_CHECK_MS)
         val breatherRemaining = Breather.remainingMs(this)
         if (breatherRemaining > 0) root.postDelayed(breatherTick, breatherRemaining + 1L)
         if (!paused && !serviceEnabled()) root.addView(setup().apply { tag = "setup" })
-        else if (needsNotificationPermission()) root.addView(ui.quiet("Allow status & reminder notifications") {
+        else if (needsNotificationPermission()) root.addView(ui.quiet("Allow notifications") {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         })
 
@@ -182,7 +227,6 @@ class MainActivity : Activity() {
         root.addView(protection().apply { tag = "protection" })
         root.addView(privacy().apply { tag = "privacy" })
         root.addView(diagnostics().apply { tag = "diagnostics" })
-        root.addView(ui.note("On your device. Under your control.").apply { setPadding(0, ui.dp(20), 0, 0) })
 
         val animateReveal = rendered && Motion.enabled(this)
         pendingPreDraw = object : ViewTreeObserver.OnPreDrawListener {
@@ -207,49 +251,78 @@ class MainActivity : Activity() {
         rendered = true
     }
 
+    /**
+     * Title and (optional, one short line) detail of the status block. A pending pause uses the
+     * notification's [PauseStatus], so the screen and the notification never disagree.
+     */
+    private fun statusText(paused: Boolean): Pair<String, String> {
+        val active = serviceEnabled() && DetachService.isRunning && !paused
+        val connecting = serviceEnabled() && !DetachService.isRunning && !paused
+        if (paused) {
+            val status = PauseStatus.of(this)
+            val title = when {
+                status == PauseStatus.RECONNECTING -> "Resuming…"
+                status.automatic -> "Paused · ${StatusNotifications.resumesBy(this).replaceFirstChar { it.lowercase() }}"
+                else -> "Paused"
+            }
+            val detail = when (status) {
+                PauseStatus.RECONNECTING -> "Not back soon? Tap Resume again."
+                PauseStatus.RESUME_STALLED -> "Didn't resume. Tap Resume to retry."
+                PauseStatus.DUE -> "Timer done. Tap Resume."
+                PauseStatus.DETECTION_ON -> "Or sooner, when Instagram or YouTube opens."
+                PauseStatus.DETECTION_STOPPED -> "App detection stopped."
+                PauseStatus.AUTOMATIC -> ""
+                PauseStatus.MANUAL -> "Tap Resume when you're done paying."
+                PauseStatus.NEEDS_USB -> "Resume opens Accessibility settings."
+            }
+            return title to detail
+        }
+        val title = when {
+            active -> "Protection is on"
+            connecting -> "Waiting for Android"
+            else -> "Protection is off"
+        }
+        val detail = when {
+            active && Breather.remainingMs(this) > 0 -> "Breather on · Instagram & YouTube unblocked"
+            connecting -> "Turned on, but not connected yet."
+            else -> ""
+        }
+        return title to detail
+    }
+
+    /** Everything the status-dependent parts of the screen are built from. */
+    private fun statusKey(): String {
+        val paused = Pause.isPending(this)
+        val (title, detail) = statusText(paused)
+        return "$paused|${Pause.isExpired(this)}|${serviceEnabled()}|${DetachService.isRunning}|${Pause.canSelfEnable(this)}|$title|$detail"
+    }
+
     private fun status(paused: Boolean): View {
         val active = serviceEnabled() && DetachService.isRunning && !paused
         val connecting = serviceEnabled() && !DetachService.isRunning && !paused
         val color = if (active) ui.accent else ui.caution
-        val title = when {
-            paused -> "Protection is paused"
-            active -> "Protection is on"
-            connecting -> "Waiting for Android"
-            else -> "Ready when you are"
-        }
-        val detail = when {
-            paused && serviceEnabled() -> "Resume requested. Waiting for Android to reconnect; protection is not confirmed yet."
-            paused && Pause.isExpired(this) -> "The pause timer is due. If automatic resume is unavailable or delayed, use Resume protection."
-            paused && Pause.canSelfEnable(this) -> "Automatic resume after ${Pause.untilText(this)}. You can resume sooner below."
-            paused -> "Reminder at ${Pause.untilText(this)}. Automatic resume needs the optional USB setup below."
-            active && Breather.remainingMs(this) > 0 -> "Your breather is on. Instagram and YouTube are unblocked until it ends."
-            active -> "Your app choices below are being applied."
-            connecting -> "Accessibility is enabled, but the service hasn’t connected yet. Protection is not confirmed."
-            else -> "One Android permission to get started."
-        }
+        val (title, detail) = statusText(paused)
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(View(this@MainActivity).apply { setBackgroundColor(color) }, LinearLayout.LayoutParams(ui.dp(3), ViewGroup.LayoutParams.MATCH_PARENT))
             addView(column().apply {
                 setPadding(ui.dp(16), ui.dp(2), 0, ui.dp(2))
                 addView(ui.text(title, 23f, strong = true).apply { isAccessibilityHeading = true })
-                addView(ui.note(detail).apply { setPadding(0, ui.dp(8), 0, 0) })
+                if (detail.isNotEmpty()) addView(ui.note(detail).apply { setPadding(0, ui.dp(8), 0, 0) })
                 if (connecting) addView(ui.quiet("Check Accessibility settings") {
                     open(Intent(SysSettings.ACTION_ACCESSIBILITY_SETTINGS))
                 })
                 if (paused) {
                     addView(ui.space(14))
-                    addView(ui.primary("Resume protection") {
+                    addView(ui.primary("Resume") {
                         if (Pause.resume(this@MainActivity)) {
-                            toast("Resume requested. Waiting for Android.")
+                            toast("Resuming…")
                             render()
                         } else {
-                            Toast.makeText(this@MainActivity, "Turn Use Detach on within 3 minutes. If you take longer, return to Detach and tap Resume again.", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this@MainActivity, "Turn on Use Detach within 3 minutes, or tap Resume again.", Toast.LENGTH_LONG).show()
                             open(Intent(SysSettings.ACTION_ACCESSIBILITY_SETTINGS))
                         }
                     })
-                    addView(ui.note(if (Pause.canSelfEnable(this@MainActivity)) "The timer can also resume protection. Optional app detection is configured under Payments."
-                        else "Opens Accessibility. Turn Use Detach on within 3 minutes of tapping Resume. If you take longer, return here and tap Resume again.").apply { setPadding(0, ui.dp(8), 0, 0) })
                 }
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
@@ -257,13 +330,13 @@ class MainActivity : Activity() {
 
     private fun setup() = column().apply {
         addView(ui.section("Set up protection"))
-        addView(ui.note("Detach uses Accessibility only in Instagram, YouTube and its protected Settings pages. It never reads banking or payment screens and has no internet access."))
+        addView(ui.note("Reads only Instagram, YouTube and Detach's Settings pages."))
         addView(ui.space(14))
         addView(ui.primary("Open Accessibility") { open(Intent(SysSettings.ACTION_ACCESSIBILITY_SETTINGS)) })
-        addView(ui.note("Open Detach under Downloaded apps, then turn on Use Detach.").apply { setPadding(0, ui.dp(10), 0, 0) })
+        addView(ui.note("1. Downloaded apps › Detach\n2. Turn on Use Detach").apply { setPadding(0, ui.dp(10), 0, 0) })
         if (Build.VERSION.SDK_INT >= 33) {
             addView(disclosure("restricted", "Android says Restricted setting?") {
-                addView(ui.note("For an app installed from a file: open App info, tap the top-right menu and choose Allow restricted settings. Then return to Accessibility."))
+                addView(ui.note("1. Open App info\n2. Menu ⋮ › Allow restricted settings\n3. Come back and turn on Use Detach"))
                 addView(ui.space(8))
                 addView(ui.secondary("Open App info") {
                     open(Intent(SysSettings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
@@ -274,7 +347,6 @@ class MainActivity : Activity() {
             addView(ui.quiet("Allow notifications · optional") {
                 requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
             })
-            addView(ui.note("For protection status, payment reminders and app compatibility warnings."))
         }
     }
 
@@ -282,19 +354,19 @@ class MainActivity : Activity() {
         addView(ui.section("App controls"))
         val options = column()
         addView(appRow(R.drawable.ic_instagram_glyph, "Instagram", settings.igEnabled,
-            { if (it) "Your selected limits are on" else "No limits applied" }) {
+            { if (it) "Limits on" else "Off" }) {
             settings.igEnabled = it
             setEnabledLook(options, it)
             DetachService.refreshSettings()
         })
-        options.addView(optionRow("Hide home feed", "Stories can stay available", settings.igFeed) { settings.igFeed = it })
-        options.addView(optionRow("Block Reels tab", "Shared reels are controlled separately below", settings.igReelsTab) { settings.igReelsTab = it })
-        options.addView(optionRow("Hide Explore & reels in search", "Account search stays available", settings.igExplore) { settings.igExplore = it })
-        options.addView(optionRow("Hide others’ profile posts", "Their name, bio and buttons stay visible", settings.igOtherProfiles) { settings.igOtherProfiles = it })
+        options.addView(optionRow("Hide home feed", "Stories can stay", settings.igFeed) { settings.igFeed = it })
+        options.addView(optionRow("Block Reels tab", "Shared reels: see below", settings.igReelsTab) { settings.igReelsTab = it })
+        options.addView(optionRow("Hide Explore & reels in search", "Account search stays", settings.igExplore) { settings.igExplore = it })
+        options.addView(optionRow("Hide others’ profile posts", "Name and bio stay", settings.igOtherProfiles) { settings.igOtherProfiles = it })
         options.addView(ui.hairline())
-        options.addView(optionRow("Allow Stories", "Off leaves Stories immediately", settings.igStories) { settings.igStories = it })
+        options.addView(optionRow("Allow Stories", "Off leaves Stories", settings.igStories) { settings.igStories = it })
         options.addView(optionRow("Allow DMs", "Inbox and chat threads", settings.igMessages) { settings.igMessages = it })
-        options.addView(optionRow("Allow reels sent in DMs", "One shared reel; no swiping to the next", settings.igSharedReels) { settings.igSharedReels = it })
+        options.addView(optionRow("Allow reels sent in DMs", "One reel, no swiping", settings.igSharedReels) { settings.igSharedReels = it })
         setEnabledLook(options, settings.igEnabled, animate = false)
         addView(disclosure("instagram-options", "Customize Instagram") { addView(options) })
         addView(ui.hairline())
@@ -302,7 +374,7 @@ class MainActivity : Activity() {
 
     private fun youtube() = column().apply {
         addView(appRow(R.drawable.ic_youtube_glyph, "YouTube", settings.ytShorts,
-            { if (it) "Shorts blocked. Videos stay available." else "No limits applied" }) {
+            { if (it) "Shorts blocked" else "Off" }) {
             settings.ytShorts = it
             DetachService.refreshSettings()
         })
@@ -311,26 +383,44 @@ class MainActivity : Activity() {
 
     private fun payments(paused: Boolean) = column().apply {
         addView(ui.section("Payments"))
-        addView(ui.text("Switch off. Pay. Resume.", 19f, strong = true))
-        addView(ui.note("A payment pause fully disables Accessibility and removes overlays. The timer resumes protection with the optional USB grant; otherwise it reminds you to resume in Settings. App detection is a separate opt-in below.").apply { setPadding(0, ui.dp(8), 0, ui.dp(14)) })
-        if (!paused && DetachService.isRunning) addView(ui.secondary("Pause protection for payment") {
-            Auth.confirm(this@MainActivity, "Pause for payments") {
-                toast(if (DetachService.pauseForPayments()) "Protection paused. Your payment timer is set."
-                    else "Could not pause protection. Check Accessibility or try again.")
+        addView(ui.text("Detach turns off while you pay.", 15f).apply {
+            tag = "payment-setup"
+            setPadding(0, 0, 0, ui.dp(4))
+        })
+        // Conditional one-line warnings: only when they apply.
+        if (paused) addView(ui.note("GPay still blocked? Restart once. Resume here after.").apply {
+            tag = "payment-restart"
+            setPadding(0, ui.dp(8), 0, 0)
+        })
+        developerOptionsNote()?.let { addView(it) }
+        val others = OtherAccessibilityApps.labels(this@MainActivity)
+        if (others.isNotEmpty()) addView(column().apply {
+            tag = "other-accessibility"
+            setPadding(0, ui.dp(8), 0, 0)
+            addView(ui.note("${others.joinToString()} ${if (others.size == 1) "is" else "are"} also on. Payment apps may refuse."))
+            addView(ui.quiet("Open Accessibility settings") { open(Intent(SysSettings.ACTION_ACCESSIBILITY_SETTINGS)) })
+        })
+        addView(ui.space(12))
+        if (!paused && DetachService.isRunning) addView(ui.secondary(StatusNotifications.PAUSE_ACTION) {
+            Auth.confirm(this@MainActivity, StatusNotifications.PAUSE_ACTION) {
+                toast(if (DetachService.pauseForPayments()) "Paused for payment" else "Couldn't pause. Try again.")
                 render()
             }
         })
-        addView(disclosure("payment-options", "Payment preferences") {
-            addView(optionRow("Auto-pause for payment apps", "Checks selected package names, never screen content", settings.autoPausePayments) {
+        addView(disclosure("payment-options", "Payment settings") {
+            addView(ui.secondary("Payment apps (${settings.paymentPackages.size})") { requirePassword { choosePaymentApps() } })
+            addView(reminderRow())
+            addView(optionRow("Auto-pause for payment apps", "Checks app names, never screen content", settings.autoPausePayments) {
                 settings.autoPausePayments = it
             })
-            addView(ui.note("Opening a selected app bypasses your password and turns all protection off during the pause. Instagram, YouTube and uninstalling Detach are unrestricted until protection resumes. Only selected apps are detected; embedded payments are not.").apply {
+            addView(ui.note(listOf(
+                "Opening a selected app turns protection off, without your password, until it resumes.",
+                resumeWhileSelectedNote(),
+            ).filter { it.isNotEmpty() }.joinToString("\n")).apply {
+                tag = "payment-auto-note"
                 setPadding(0, 0, 0, ui.dp(12))
             })
-            addView(ui.secondary("Choose payment & banking apps") { requirePassword { choosePaymentApps() } })
-            addView(ui.note("${settings.paymentPackages.size} apps selected. Four UPI apps are included by default; select any other banks you use.").apply { setPadding(0, ui.dp(8), 0, ui.dp(8)) })
-            addView(reminderRow())
-            addView(optionRow("Resume when Instagram or YouTube opens", "Optional local app detection during payment pauses", settings.resumeOnSocialForeground) { enabled ->
+            addView(optionRow("Resume when Instagram or YouTube opens", "Local app check while paused", settings.resumeOnSocialForeground) { enabled ->
                 if (enabled) confirmForegroundResume() else {
                     settings.resumeOnSocialForeground = false
                     PauseForegroundMonitor.stop(this@MainActivity)
@@ -338,29 +428,82 @@ class MainActivity : Activity() {
                 }
             })
             if (settings.resumeOnSocialForeground && !PauseForegroundMonitor.hasUsageAccess(this@MainActivity)) {
-                addView(ui.note("App detection is unavailable without Usage Access. The payment timer still applies."))
+                addView(ui.note("Needs Usage Access."))
                 addView(ui.quiet("Review Usage Access") { open(PauseForegroundMonitor.usageAccessIntent(this@MainActivity)) })
             }
-            addView(optionRow("Show protection status", "Silent notification with a payment-pause action", settings.pauseNotification) {
+            addView(optionRow("Status notification", "Silent, with a Pause button", settings.pauseNotification) {
                 settings.pauseNotification = it
                 Pause.refreshNotification(this@MainActivity)
             })
-            if (!Pause.canSelfEnable(this@MainActivity)) addView(disclosure("usb", "Enable automatic Resume over USB") {
-                addView(ui.note("This optional grant lets the timer, your explicit Resume tap, and opt-in app detection re-enable Detach. Without it, Android requires you to turn Detach on in Accessibility settings. Timer-only mode cannot tell whether you are still banking; choose enough time."))
+            if (Build.VERSION.SDK_INT >= 33) addView(ui.quiet("Add Quick Settings tile") { addPauseTile() })
+            if (!Pause.canSelfEnable(this@MainActivity)) addView(disclosure("usb", "Auto-resume (USB setup)") {
+                addView(ui.note("Lets Detach turn itself back on after a pause."))
+                addView(ui.note("1. Turn on USB debugging\n2. From a computer, run once:").apply { setPadding(0, ui.dp(8), 0, 0) })
                 addView(ui.note(Pause.GRANT_COMMAND).apply {
                     typeface = Typeface.MONOSPACE
                     setTextIsSelectable(true)
                     setPadding(0, ui.dp(10), 0, ui.dp(10))
                 })
+                addView(ui.note("3. Turn USB debugging off. The grant stays."))
             })
         })
         addView(ui.hairline())
     }
 
+    /**
+     * Some UPI and bank apps refuse while USB debugging or Developer options are on. The USB
+     * grant is a one-time `pm grant`: Android keeps it after both are switched off (until Detach
+     * is uninstalled or it is revoked), so the owner can switch them off without losing resume.
+     * Shown only while they are on. Names Developer options: switching it off also switches USB
+     * debugging off, and it is the cause even when USB debugging is already off.
+     */
+    private fun developerOptionsNote(): View? {
+        if (!developerOptionsOn()) return null
+        val granted = Pause.canSelfEnable(this)
+        return column().apply {
+            tag = "developer-options"
+            setPadding(0, ui.dp(8), 0, 0)
+            addView(ui.note("Turn off Developer options before paying.${if (granted) " The USB grant stays." else ""}"))
+            addView(ui.quiet("Open Developer options") {
+                open(Intent(SysSettings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+            })
+        }
+    }
+
+    private fun developerOptionsOn(): Boolean = runCatching {
+        SysSettings.Global.getInt(contentResolver, SysSettings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) != 0 ||
+            SysSettings.Global.getInt(contentResolver, SysSettings.Global.ADB_ENABLED, 0) != 0
+    }.getOrDefault(false)
+
+    /**
+     * Only app detection can see that a selected app is still in front. In timer-only mode the
+     * timer turns Detach back on when it is due (it waits only while the phone is locked), so the
+     * copy must not promise that a selected app keeps protection paused.
+     */
+    private fun resumeWhileSelectedNote(): String = when {
+        !Pause.canSelfEnable(this) -> ""
+        settings.resumeOnSocialForeground && PauseForegroundMonitor.hasUsageAccess(this) -> ""
+        else -> "Without app detection, the timer can resume mid-checkout."
+    }
+
+    /** Asks System UI to offer the "Pause for payment" tile (Android 13+); the owner decides. */
+    private fun addPauseTile() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val asked = runCatching {
+            getSystemService(android.app.StatusBarManager::class.java).requestAddTileService(
+                android.content.ComponentName(this, PauseTileService::class.java),
+                PauseTileService.LABEL,
+                android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_pause),
+                mainExecutor,
+            ) { }
+        }.isSuccess
+        if (!asked) toast("Edit Quick Settings to add the tile")
+    }
+
     private fun reminderRow() = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(0, ui.dp(8), 0, ui.dp(8))
-        addView(ui.text("Payment pause", 14f), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(ui.text("Pause length", 14f), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         fun adjust(label: String, delta: Int) = ui.secondary(label) {
             val next = (settings.pauseMinutes + delta).coerceIn(1, 60)
             if (next != settings.pauseMinutes) requirePassword {
@@ -383,7 +526,7 @@ class MainActivity : Activity() {
     private fun choosePaymentApps() {
         PaymentAppPicker.show(this) {
             DetachService.refreshSettings()
-            toast("Payment apps saved on this device")
+            toast("Saved")
             render()
         }
     }
@@ -391,9 +534,9 @@ class MainActivity : Activity() {
     private fun confirmForegroundResume() {
         val visit = authorizationVisit
         val ready = Pause.canSelfEnable(this) && PauseForegroundMonitor.hasUsageAccess(this)
-        val detail = "While payment protection is paused, a separate local monitor checks foreground app packages about every 2 seconds while your screen is unlocked. It does not read screen content, save app history, or send data anywhere. It stops after resume and does not poll while the screen is off or locked. Android can delay detection or prevent it from starting.\n\nThis needs Usage Access and the optional USB grant. Timer-only mode has no app monitor and cannot know whether you are still banking. Enabling applies to your next payment pause."
+        val detail = "While paused, Detach checks which app is open — names only, every 2 s, while unlocked. Nothing is saved or sent. Needs Usage Access and USB setup."
         val dialog = AlertDialog.Builder(this)
-            .setTitle("Enable local app detection?")
+            .setTitle("Allow app detection?")
             .setMessage(detail)
             .setNegativeButton("Not now") { _, _ -> render() }
             .setOnCancelListener { render() }
@@ -401,13 +544,15 @@ class MainActivity : Activity() {
                 if (!visitActive || authorizationVisit != visit || isFinishing || isDestroyed) return@setPositiveButton
                 if (ready && Pause.canSelfEnable(this) && PauseForegroundMonitor.hasUsageAccess(this)) {
                     settings.resumeOnSocialForeground = true
+                    rearmDetection()
+                    Pause.refreshNotification(this)
                     render()
                 } else {
                     expanded.add("payment-options")
                     expanded.add("usb")
                     render()
                     if (!PauseForegroundMonitor.hasUsageAccess(this)) open(PauseForegroundMonitor.usageAccessIntent(this))
-                    else toast("Complete the optional USB grant, then enable app detection.")
+                    else toast("Finish USB setup first")
                 }
             }
             .create()
@@ -424,30 +569,33 @@ class MainActivity : Activity() {
     private fun protection() = column().apply {
         addView(ui.section("Settings protection"))
         addView(ui.text(when {
-            !lock.isSet -> "Add a little friction"
-            unlocked -> "Unlocked for this visit"
-            else -> "Your settings are locked"
+            !lock.isSet -> "Add a password"
+            unlocked -> "Unlocked"
+            else -> "Locked"
         }, 19f, strong = true))
         addView(ui.note(when {
-            !lock.isSet -> "A password keeps an impulse from changing your limits."
-            unlocked -> "They lock again when you leave this screen."
-            Auth.biometricAvailable(this@MainActivity) -> "Use your fingerprint or password to change app controls."
-            else -> "Use your password to change app controls."
+            !lock.isSet -> "Stops impulse changes to your limits."
+            unlocked -> "Locks again when you leave."
+            Auth.biometricAvailable(this@MainActivity) -> "Fingerprint or password to change."
+            else -> "Password needed to change."
         }).apply { setPadding(0, ui.dp(8), 0, ui.dp(14)) })
         if (!lock.isSet) addView(ui.secondary("Set password") { setPasswordDialog() })
         else addView(LinearLayout(this@MainActivity).apply {
             addView(ui.secondary("Change password") { setPasswordDialog() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(ui.quiet("Remove") { removePassword() })
         })
-        addView(disclosure("lock-info", "How protection works") {
-            addView(ui.note("The same password protects Detach’s system settings from being switched off, force-stopped, cleared or uninstalled. Without a password, that screen asks for your fingerprint, or a 30-second wait if none is available. Changing or removing a password always requires the current password."))
+        addView(disclosure("lock-info", "How it works") {
+            addView(ui.note("It also guards turning off, force-stopping or uninstalling Detach.\nNo password? Fingerprint, or a 30-second wait.\nChanging the password needs the current one."))
         })
         addView(ui.hairline())
     }
 
-    private fun privacy() = disclosure("privacy-info", "Private by design") {
-        addView(ui.note("No internet permission. Nothing is uploaded.\n\nScreen content is read only in Instagram, YouTube and protected Settings pages. Payment auto-pause checks selected package names, never their content. Optional Usage Access detection checks recent foreground packages only during pauses; app history is not saved.\n\nPreferences, a hashed password, pause and breather timing, and diagnostic counters stay in private on-device storage. Screen content is not saved."))
-        addView(ui.space(12))
+    private fun privacy() = column().apply {
+        addView(ui.note("No internet. Nothing leaves your phone.").apply { setPadding(0, ui.dp(16), 0, 0) })
+        addView(disclosure("privacy-info", "Privacy details") {
+            addView(ui.note("Reads screens only in Instagram, YouTube and Detach's Settings pages.\nPayment checks and app detection use app names only.\nSettings, a hashed password and counters stay on this phone."))
+            addView(ui.space(12))
+        })
     }
 
     private fun diagnostics() = disclosure("diagnostic-info", "Diagnostics") {
@@ -571,7 +719,7 @@ class MainActivity : Activity() {
         val visit = authorizationVisit
         val changing = lock.isSet
         val current = if (changing) passwordEditText(this, "Current password") else null
-        val first = passwordEditText(this, "New password (at least 4 characters)")
+        val first = passwordEditText(this, "New password (4+ characters)")
         val second = passwordEditText(this, "Repeat new password")
         val box = column().apply {
             setPadding(ui.dp(24), ui.dp(8), ui.dp(24), 0)
@@ -581,7 +729,7 @@ class MainActivity : Activity() {
         }
         val dialog = AlertDialog.Builder(this)
             .setTitle(if (changing) "Change password" else "Set a password")
-            .setMessage("You'll need it to change controls and unlock protected system settings. If you forget it, reinstalling Detach resets everything.")
+            .setMessage("Forgot it? Reinstalling Detach resets everything.")
             .setView(box)
             .setPositiveButton("Save", null)
             .setNegativeButton("Cancel", null)
@@ -639,7 +787,7 @@ class MainActivity : Activity() {
     }
 
     private fun open(intent: Intent) {
-        runCatching { startActivity(intent) }.onFailure { toast("Couldn't open that screen on this phone") }
+        runCatching { startActivity(intent) }.onFailure { toast("Couldn't open that screen") }
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()

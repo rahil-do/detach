@@ -61,7 +61,7 @@ This uses Android's developer tool `adb`. Installs through `adb` aren't blocked 
    ```
    See [below](#optional-let-detach-turn-itself-back-on-after-a-pause) for what it does.
 
-4. **Optional:** after setup, turn **USB debugging off** again. Some UPI and banking apps refuse to run while Developer options are on. Detach keeps working without it.
+4. **Optional:** after setup, turn **USB debugging** and **Developer options** off again. Some UPI and banking apps refuse to open or pay while either is on. Detach keeps working without them: the `WRITE_SECURE_SETTINGS` grant above is one-time and stays after both are off and through restarts, until Detach is uninstalled or the grant is revoked. A payment pause that is running when the phone restarts still needs a tap on **Resume**.
 
 ---
 

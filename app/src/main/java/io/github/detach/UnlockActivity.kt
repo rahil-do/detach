@@ -61,9 +61,9 @@ class UnlockActivity : Activity() {
         when {
             lock.isSet -> {
                 msg.text = if (biometric) {
-                    "Use your fingerprint or enter your Detach password. You'll then have 2 minutes to change Detach's system settings."
+                    "Use your fingerprint or password. You'll get 2 minutes."
                 } else {
-                    "Enter your Detach password. You'll then have 2 minutes to change Detach's system settings."
+                    "Enter your password. You'll get 2 minutes."
                 }
                 val field = passwordEditText(this, "Password")
                 input = field
@@ -88,7 +88,7 @@ class UnlockActivity : Activity() {
                 if (!biometric) field.requestFocus()
             }
             biometric -> {
-                msg.text = "Confirm with your fingerprint. You'll then have 2 minutes to change Detach's system settings."
+                msg.text = "Use your fingerprint. You'll get 2 minutes."
                 ok.text = "Unlock"
                 ok.setOnClickListener { askBiometric() }
             }
@@ -125,7 +125,7 @@ class UnlockActivity : Activity() {
     /** No password (and no usable fingerprint): make them wait. */
     private fun startWait() {
         if (timer != null) return
-        msg.text = "Take a breath. If you still want to change Detach's system settings after the wait, you'll have 2 minutes."
+        msg.text = "Take a breath. Then you'll get 2 minutes."
         ok.isEnabled = false
         ok.text = "Wait 30"
         ok.setOnClickListener { granted() }

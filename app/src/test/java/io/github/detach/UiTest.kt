@@ -42,6 +42,7 @@ class UiTest {
     private val context get() = RuntimeEnvironment.getApplication()
 
     @Before fun reset() {
+        MonitorTestSupport.reset()
         for (name in listOf("settings", "lock", "pause")) context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit()
         SystemSettings.Global.putFloat(context.contentResolver, SystemSettings.Global.ANIMATOR_DURATION_SCALE, 0f)
         SystemSettings.Secure.putString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
@@ -91,7 +92,7 @@ class UiTest {
         Lock(context).set("protected")
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         disclosure(activity, "payment-options").performClick()
-        button(activity, "Choose payment & banking apps").performClick()
+        views(activity).filterIsInstance<Button>().first { it.text.startsWith("Payment apps (") }.performClick()
         var dialog = ShadowAlertDialog.getLatestAlertDialog()
         assertEquals("Enter password", shadowOf(dialog).title.toString())
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
@@ -174,7 +175,7 @@ class UiTest {
         toggle(activity, "Resume when Instagram or YouTube opens").performClick()
         assertFalse(Settings(activity).resumeOnSocialForeground)
         val dialog = ShadowAlertDialog.getLatestAlertDialog()
-        assertEquals("Enable local app detection?", shadowOf(dialog).title.toString())
+        assertEquals("Allow app detection?", shadowOf(dialog).title.toString())
         assertEquals("Review setup", dialog.getButton(AlertDialog.BUTTON_POSITIVE).text.toString())
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
         assertFalse(Settings(activity).resumeOnSocialForeground)
@@ -199,6 +200,51 @@ class UiTest {
         assertFalse(Settings(activity).resumeOnSocialForeground)
     }
 
+    @Test fun `enabling app detection during a pending pause starts it for that pause at once`() {
+        shadowOf(context).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        shadowOf(context.getSystemService(AppOpsManager::class.java)).setMode(
+            AppOpsManager.OPSTR_GET_USAGE_STATS, context.applicationInfo.uid, context.packageName, AppOpsManager.MODE_ALLOWED,
+        )
+        assertTrue(Pause.begin(context))
+        assertNull(shadowOf(context).nextStartedService)
+        val token = Pause.automaticToken(context)
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        assertNull(shadowOf(context).nextStartedService)
+        disclosure(activity, "payment-options").performClick()
+        toggle(activity, "Resume when Instagram or YouTube opens").performClick()
+        ShadowAlertDialog.getLatestAlertDialog().getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        val started = shadowOf(context).nextStartedService
+        assertEquals(PauseForegroundMonitor::class.java.name, started.component?.className)
+        assertEquals(token, started.getStringExtra("pause_token"))
+        assertEquals(token, Pause.automaticToken(context))
+        assertFalse(Pause.consumeResumeAuthorization(context))
+    }
+
+    @Test fun `payments warn about USB debugging only while it is on and say the one time grant stays`() {
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.DEVELOPMENT_SETTINGS_ENABLED, 1)
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.ADB_ENABLED, 1)
+        shadowOf(context).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        var activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val note = (views(activity).first { it.tag == "developer-options" } as ViewGroup)
+        val text = (0 until note.childCount).map { note.getChildAt(it) }.filterIsInstance<TextView>().joinToString(" ") { it.text }
+        assertTrue(text, text.contains("Turn off Developer options before paying"))
+        assertTrue(text, text.contains("The USB grant stays"))
+        views(activity).filterIsInstance<Button>().first { it.text == "Open Developer options" }.performClick()
+        assertEquals(SystemSettings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, shadowOf(activity).nextStartedActivity.action)
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0)
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.ADB_ENABLED, 0)
+        shadowOf(context).denyPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        // Warnings only when they apply.
+        assertTrue(views(activity).none { it.tag == "developer-options" })
+        assertTrue(views(activity).filterIsInstance<Button>().none { it.text == "Open Developer options" })
+        // The USB setup steps still say the grant survives turning USB debugging off.
+        disclosure(activity, "payment-options").performClick()
+        disclosure(activity, "usb").performClick()
+        assertTrue(views(activity).filterIsInstance<TextView>().any { it.text.contains("Turn USB debugging off. The grant stays.") })
+    }
+
     @Test fun `accepted monitor consent changes only the opt in without starting a watcher`() {
         shadowOf(context).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
         shadowOf(context.getSystemService(AppOpsManager::class.java)).setMode(
@@ -218,9 +264,9 @@ class UiTest {
         context.getSharedPreferences("pause", Context.MODE_PRIVATE).edit()
             .putLong("until", System.currentTimeMillis() + 60_000).commit()
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        assertTrue(views(activity).filterIsInstance<TextView>().any { it.text == "Protection is paused" })
+        assertTrue(views(activity).filterIsInstance<TextView>().any { it.text == "Paused" })
         assertFalse(views(activity).filterIsInstance<TextView>().any { it.text == "Set up protection" })
-        button(activity, "Resume protection").performClick()
+        button(activity, "Resume").performClick()
         assertEquals(SystemSettings.ACTION_ACCESSIBILITY_SETTINGS, shadowOf(activity).nextStartedActivity.action)
         assertTrue(Pause.isPending(activity))
         assertTrue(context.getSharedPreferences("pause", Context.MODE_PRIVATE).getLong("resume_authorized_at", 0) > 0)
@@ -327,13 +373,14 @@ class UiTest {
         assertTrue(android.graphics.Color.luminance(ui.sub) > 0.3f)
     }
 
-    @Test fun `payment preferences disclose the password bypass and manual resume tradeoff`() {
+    @Test fun `payment settings disclose the password bypass tradeoff`() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         disclosure(activity, "payment-options").performClick()
-        val notice = views(activity).filterIsInstance<TextView>().first { it.text.contains("bypasses your password") }
+        val notice = views(activity).filterIsInstance<TextView>().first { it.tag == "payment-auto-note" }
         assertEquals(View.VISIBLE, notice.visibility)
-        assertTrue(notice.text.contains("until protection resumes"))
-        assertTrue(notice.text.contains("embedded payments are not"))
+        assertTrue(notice.text.toString(), notice.text.contains("Opening a selected app turns protection off"))
+        assertTrue(notice.text.toString(), notice.text.contains("without your password"))
+        assertTrue(notice.text.toString(), notice.text.contains("until it resumes"))
     }
 
     @Test fun `enabled accessibility without a connected service never claims active protection`() {
@@ -343,7 +390,7 @@ class UiTest {
         val labels = views(activity).filterIsInstance<TextView>().map { it.text.toString() }
         assertTrue(labels.contains("Waiting for Android"))
         assertFalse(labels.contains("Protection is on"))
-        assertFalse(labels.contains("Pause protection for payment"))
+        assertFalse(labels.contains("Pause for payment"))
     }
 
     private fun views(activity: Activity): List<View> {

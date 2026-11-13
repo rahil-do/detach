@@ -299,6 +299,21 @@ class PaymentAppPickerTest {
         dialog.dismiss()
     }
 
+    @Test fun `the picker asks for the apps you pay from and saves them into the event filter`() {
+        install("com.example.checkout", "Checkout Example")
+        PaymentAppPicker.show(activity()) {}
+        val dialog = loadedDialog()
+        assertEquals("Payment apps", shadowOf(dialog).title.toString())
+        val hint = dialog.window!!.decorView.findViewWithTag<TextView>("payment-app-hint")
+        assertEquals(View.VISIBLE, hint.visibility)
+        assertTrue(hint.text.contains("apps you pay from"))
+        click(list(dialog), 0)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+        assertTrue("com.example.checkout" in Settings(context).paymentPackages)
+        assertTrue("com.example.checkout" in Settings(context).eventPackages())
+        assertTrue(Pause.shouldAutoPausePayment(context, "com.example.checkout"))
+    }
+
     private fun activity() = Robolectric.buildActivity(Activity::class.java).setup().get().apply {
         setTheme(R.style.Theme_Detach)
     }

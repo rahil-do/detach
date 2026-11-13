@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  packageNames is the default event allowlist, narrowed or extended to selected payment
-  packages at runtime. Only Instagram, YouTube, and the Settings / uninstall guard screens
+  packageNames is the default event allowlist, narrowed or extended at runtime to the selected
+  UPI, bank and checkout ("apps you pay from") packages. Only Instagram, YouTube, and the Settings / uninstall guard screens
   may have their content read. SystemUI and payment events are metadata-only routes.
   No flagRetrieveInteractiveWindows: the service cannot list other apps' windows.
 -->

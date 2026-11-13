@@ -29,9 +29,14 @@ class Health(private val context: Context) {
     private var ytBarHits = p.getInt("yt_bar_hits", 0)
 
     init {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.cancel("ig".hashCode())
-        manager.cancel("yt".hashCode())
+        // Notifications from older versions; once per process (the status screen builds a Health
+        // for every render, and each cancel is a call into the notification service).
+        if (!legacyCleared) {
+            legacyCleared = true
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.cancel("ig".hashCode())
+            manager.cancel("yt".hashCode())
+        }
     }
 
     fun seen(signal: String) {
@@ -119,7 +124,7 @@ class Health(private val context: Context) {
         if (!allowPost && nm.activeNotifications.none { it.id == NOTIFICATION_ID }) return
         nm.createNotificationChannel(
             NotificationChannel("health", "Protection checks", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "Alerts when Detach may no longer recognise a supported screen"
+                description = "When a screen isn't recognised"
                 lockscreenVisibility = Notification.VISIBILITY_PRIVATE
             },
         )
@@ -130,20 +135,19 @@ class Health(private val context: Context) {
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val text = "Some screen layouts aren't being recognised. Open diagnostics to check protection; an app update may be needed."
+        val text = "Some screens aren't recognised. Open diagnostics."
         val publicVersion = Notification.Builder(context, "health")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Detach")
-            .setContentText("Open Detach to review protection.")
+            .setContentText("Open Detach")
             .setContentIntent(open)
             .setLocalOnly(true)
             .setShowWhen(false)
             .build()
         val notification = Notification.Builder(context, "health")
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Protection needs a check")
+            .setContentTitle("Check protection")
             .setContentText(text)
-            .setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(open)
             .setPublicVersion(publicVersion)
             .addAction(Notification.Action.Builder(null, "Open diagnostics", open).build())
@@ -190,5 +194,6 @@ class Health(private val context: Context) {
     companion object {
         const val ACTION_DIAGNOSTICS = "io.github.detach.action.DIAGNOSTICS"
         private const val NOTIFICATION_ID = 7003
+        @Volatile private var legacyCleared = false
     }
 }

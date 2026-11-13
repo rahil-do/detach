@@ -1,6 +1,6 @@
 # Privacy
 
-**Short version:** Detach has no network permission or remote endpoints. Screen-content detection is limited to Instagram, YouTube and Settings/uninstall protection. Payment auto-pause uses package names only and stops Accessibility. Optional, separately consented Usage Access monitoring checks recent app-package events during pauses, never banking-screen content; timer-only mode has no app monitor.
+**Short version:** Detach has no network permission or remote endpoints. Screen-content detection is limited to Instagram, YouTube and Settings/uninstall protection. Payment auto-pause uses package names only (of the UPI, bank and checkout apps you select) and stops Accessibility. Optional, separately consented Usage Access monitoring checks recent app-package events during pauses, never banking-screen content; timer-only mode has no app monitor.
 
 ## What Detach can access
 
@@ -8,9 +8,10 @@ Detach uses Android's **Accessibility** API, the same one screen readers use. An
 
 | Limit | Where | Effect |
 |---|---|---|
-| Event package filter | `accessibility_config.xml`, `Settings.eventPackages()` | Events are limited to the social apps, Settings/uninstall packages, System UI, and selected payment packages. Changing the payment selection updates the filter. No wildcard or unrestricted event subscription is used. |
+| Event package filter | `accessibility_config.xml`, `Settings.eventPackages()` | Events are limited to the social apps, Settings/uninstall packages, System UI, and the selected UPI, bank and checkout ("apps you pay from") packages. Changing the selection updates the filter. An event from a selected package can pause Detach by its package name alone; its source and content are never read. No wildcard or unrestricted event subscription is used. |
 | Separate content allowlist | `Targets.READABLE`, `DetachService.evaluate()`, `Inspector` | Payment/System UI events are routed using package metadata before accessing their source or screen contents. Receiving an event never grants a package membership in the content allowlist. |
 | No `flagRetrieveInteractiveWindows` | `accessibility_config.xml` | Detach can't list or inspect other apps' windows. |
+| Other accessibility apps, names only | `OtherAccessibilityApps`, manifest `<queries>` for accessibility services | The Payments section reads the component names in Android's `enabled_accessibility_services` setting and shows the labels of other enabled non-system apps, because payment apps may refuse while they are on. Nothing is stored, logged or sent, and other apps' services are never changed. |
 | Covers clipped to the app's window | `DetachService.evaluate()` | A cover can never reach outside Instagram's own window, e.g. over another app in split-screen. |
 
 ### Why the Settings app?
@@ -34,7 +35,7 @@ All of this is in the app's private storage on the phone (`/data/data/io.github.
 |---|---|
 | `settings.xml` | On/off switches, pause duration, default-off monitor preference and selected payment packages. The chooser loads app labels/icons locally and shows no package IDs; it does not upload an installed-app list. |
 | `lock.xml` | A random salt and a **PBKDF2-HMAC-SHA256** hash of your password (120,000 iterations). Never the password itself. |
-| `pause.xml` | Pause timestamps, a same-boot clock-bounded automatic capability, one-use reconnect authorization and brief original-bank suppression metadata. These are lifecycle metadata, not usage history or screen content. |
+| `pause.xml` | Pause timestamps, a same-boot clock-bounded automatic capability, one-use reconnect authorization and the selected package that started the pause (already part of your selection). These are lifecycle metadata, not usage history or screen content. Suppression keys written by earlier 0.5.0 previews are deleted when a pause starts or ends. |
 | `breather.xml` | Temporarily allowed feature names, duration and process/boot/wall/elapsed identity. Invalid state, expiry, early end or process restart restores the usual restrictions. |
 | `health.xml` | Timestamps of when each part of Instagram/YouTube was last recognised, daily counters, and the last action (e.g. "Instagram Reels tab (15:00:38)") |
 
@@ -59,14 +60,14 @@ aapt2 dump permissions Detach-<version>.apk
 |---|---|
 | `POST_NOTIFICATIONS` | Local notifications only: "Detach can't recognise Instagram/YouTube", and the silent "Detach is on / paused until…" status notification. |
 | `USE_BIOMETRIC` | Showing Android's own fingerprint prompt as an alternative to the Detach password. Detach only learns "confirmed" or "not confirmed". It never sees or stores fingerprint data, and uses no keys or crypto tied to it. |
-| `RECEIVE_BOOT_COMPLETED` | Restores the reminder after reboot if a pause is pending; never automatically restarts the accessibility service. |
+| `RECEIVE_BOOT_COMPLETED` | Restores the reminder after a reboot if a pause is pending (Android 15+ also sends this broadcast when a force-stopped Detach starts again; then the unchanged pause's timer and status are restored). The broadcast itself never turns the accessibility service back on. |
 | `WRITE_SECURE_SETTINGS` | **Optional USB grant, never granted by installing.** A Resume tap or a valid automatic timer/social observation can request adding only Detach's own Accessibility entry and enabling the associated flag. Existing services are preserved. Boot/update and app/notification taps cannot create automatic authority. |
 | `PACKAGE_USAGE_STATS` | **Optional Usage Access plus explicit in-app opt-in.** While paused and unlocked, query a narrow recent event window for foreground package changes; no content is read and no usage history is persisted. An old OS grant alone does not enable the feature. |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep the optional package monitor visible as a private local notification only during a bounded payment pause. Timer-only mode starts no foreground service. |
 
-No broad package-query or network permission is requested. Pauses use one explicit immutable alarm PendingIntent. The receiver is not exported, rejects legacy resume actions, and old tokens are revoked. The opt-in monitor uses a bounded recent event window, one worker and no wake lock, stops polling while off/locked and stops entirely after resume/opt-out/revocation/authority expiry. Android can retain a cached process; a zero-RAM or zero-battery claim is not made. See [exact monitor policy](automatic-payment-resume.md).
+The **Pause for payment** Quick Settings tile is a service only System UI can bind (`BIND_QUICK_SETTINGS_TILE`); it reads only whether a pause is pending and opens Detach's own confirmation screen. That screen's "Pause and open" reads Detach's own entry in `enabled_accessibility_services` and starts a selected app's plain launcher intent; nothing is passed to the app and nothing is stored. No broad package-query or network permission is requested; the only package-visibility declarations are launcher apps (for the chooser) and accessibility-service apps (for the label warning above). Pauses use one explicit immutable alarm PendingIntent. The receiver is not exported, rejects legacy resume actions, and old tokens are revoked. The opt-in monitor uses a bounded recent event window, one worker and no wake lock, stops polling while off/locked and stops entirely after resume/opt-out/revocation/authority expiry. Android can retain a cached process; a zero-RAM or zero-battery claim is not made. See [exact monitor policy](automatic-payment-resume.md).
 
-Automatic pausing intentionally bypasses password/anti-distraction enforcement when a selected payment app opens. Nothing is blocked or protected during that pause, including Instagram/YouTube and disabling/uninstalling Detach. This is a payment-safety tradeoff, not tamper-proof banking detection. Timer-only mode can resume while a bank is still open; optional package evidence is best-effort, not universal banking detection.
+Automatic pausing intentionally bypasses password/anti-distraction enforcement when a selected app opens (its window is in front, or it sends an event while Android reports no front window), including any checkout or shopping app you select. Nothing is blocked or protected during that pause, including Instagram/YouTube and disabling/uninstalling Detach. This is a payment-safety tradeoff, not tamper-proof banking detection. Timer-only mode can resume while a bank is still open; optional package evidence is best-effort, not universal banking detection.
 
 An explicit Resume records a durable, single-use authorization valid for three minutes, including when Android Settings must complete the enable step. Its age is bounded by monotonic elapsed time and bound to Android's boot count, not just the adjustable wall clock; boot/update broadcasts revoke it. A pending-pause service reconnect must consume that authorization before initializing; missing, expired, future-dated or already-consumed authorization is rejected. This prevents a reconnect from silently clearing a pause after process death between recording it and disabling the service. A new pause revokes the authorization, and a completed resume clears it with both pause timestamps. The boot count is system lifecycle metadata, not app-usage or payment-screen data.
 

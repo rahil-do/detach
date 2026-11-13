@@ -27,6 +27,13 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!--
+          Lets the Payments section name other apps whose accessibility service is switched on
+          (label and system/installed flag only). Nothing about them is stored or changed.
+        -->
+        <intent>
+            <action android:name="android.accessibilityservice.AccessibilityService" />
+        </intent>
     </queries>
 
     <application
@@ -58,7 +65,7 @@
             android:theme="@style/Theme.Detach.Dialog"
             android:windowSoftInputMode="stateVisible" />
 
-        <!-- "Pause for payments" confirmation, opened from Detach's own notification. Not reachable by other apps. -->
+        <!-- "Pause for payments" confirmation, opened from Detach's own notification or tile. Not reachable by other apps. -->
         <activity
             android:name=".PauseActivity"
             android:exported="false"
@@ -68,8 +75,26 @@
             android:theme="@style/Theme.Detach.Dialog" />
 
         <!--
+          "Pause for payment" Quick Settings tile. Exported only so System UI can bind it; the
+          BIND_QUICK_SETTINGS_TILE permission keeps every other app out. A tap opens the same
+          confirmation as the notification action and never pauses by itself.
+        -->
+        <service
+            android:name=".PauseTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_pause"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!--
           Detach's explicit timer may spend existing pause authority; Android's boot / update
-          broadcasts only restore reminders. Not exported, so no other app can send to it.
+          broadcasts only restore reminders (a same-boot BOOT_COMPLETED, which Android 15+ sends
+          when a force-stopped app starts again, re-arms the unchanged pause). Not exported, so no
+          other app can send to it.
         -->
         <receiver
             android:name=".PauseReceiver"
@@ -80,10 +105,15 @@
             </intent-filter>
         </receiver>
 
+        <!--
+          Optional payment-pause app detection. stopWithTask="false": swiping Detach (or "Clear
+          all") out of Recents while closing the payment app must not end detection; with it on,
+          Android stopped the monitor and then killed the process. Not exported.
+        -->
         <service
             android:name=".PauseForegroundMonitor"
             android:exported="false"
-            android:stopWithTask="true"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
