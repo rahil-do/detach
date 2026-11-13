@@ -236,14 +236,16 @@ class AutomaticPauseTest {
         begin()
         advance()
         // A payment app left on its PIN screen while the screen timed out.
-        for ((screenOn, keyguard) in listOf(false to true, true to true, false to false)) {
+        for ((index, phone) in listOf(false to true, true to true, false to false).withIndex()) {
+            val (screenOn, keyguard) = phone
             locked(screenOn, keyguard)
             Pause.onTimer(context)
             assertFalse("screen=$screenOn keyguard=$keyguard", Pause.consumeResumeAuthorization(context))
             assertNotNull(Pause.automaticToken(context))
             val retry = shadowOf(context.getSystemService(AlarmManager::class.java)).scheduledAlarms.single()
             assertTrue(retry.triggerAtTime > System.currentTimeMillis())
-            assertTrue(retry.triggerAtTime <= System.currentTimeMillis() + Pause.LOCKED_RETRY_MS)
+            // Each locked look waits longer (see PaymentResumeChecksTest for the exact steps).
+            assertTrue(retry.triggerAtTime <= System.currentTimeMillis() + Pause.LOCKED_RETRIES_MS[index])
         }
         locked(screenOn = true, keyguard = false)
         Pause.onTimer(context)

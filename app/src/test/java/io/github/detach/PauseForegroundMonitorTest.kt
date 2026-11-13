@@ -373,20 +373,29 @@ class PauseForegroundMonitorTest {
         eventSinceLastQuery(Targets.INSTAGRAM, UsageEvents.Event.MOVE_TO_FOREGROUND)
         idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS))
         assertFalse(state(), Pause.consumeResumeAuthorization(context))
-        // The starting app's hold ends by timeout (never seen leaving): Instagram's foreground,
-        // seen while it was held, no longer counts. Replaying it from the overlap must not revive it.
+        // A short screen off clears everything (Instagram's foreground, seen while the bank was
+        // held, no longer counts). Replaying it from the overlap after the unlock must not revive it.
         val packages = PauseForegroundMonitor::class.java.getDeclaredField("packages").apply { isAccessible = true }.get(service) as ForegroundPackages
-        @Suppress("UNCHECKED_CAST")
-        val seeds = ForegroundPackages::class.java.getDeclaredField("seeds").apply { isAccessible = true }.get(packages) as MutableMap<String, Long>
-        seeds.replaceAll { _, at -> at - ForegroundPackages.PAYMENT_HOLD_MS - 1_000L }
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(false)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(true)
+        context.sendBroadcast(Intent(Intent.ACTION_SCREEN_OFF))
+        shadowOf(Looper.getMainLooper()).idle()
+        shadowOf(worker).idle()
+        shadowOf(context.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        shadowOf(context.getSystemService(KeyguardManager::class.java)).setKeyguardLocked(false)
+        context.sendBroadcast(Intent(Intent.ACTION_USER_PRESENT))
+        shadowOf(Looper.getMainLooper()).idle()
+        shadowOf(worker).idle()
         repeat(2) { idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS)) }
         assertNull(packages.socialForeground())
         assertFalse(state(), Pause.consumeResumeAuthorization(context))
         // A late-stored event older than one already applied for the same app never overrides it.
+        val left = WallClock.now()
         eventSinceLastQuery(Targets.INSTAGRAM, UsageEvents.Event.MOVE_TO_BACKGROUND)
         idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS))
+        assertTrue(left - 1L >= queryAfter() - PauseForegroundMonitor.QUERY_OVERLAP_MS)
         shadowOf(context.getSystemService(UsageStatsManager::class.java))
-            .addEvent(Targets.INSTAGRAM, queryAfter() - 2_000L, UsageEvents.Event.MOVE_TO_FOREGROUND)
+            .addEvent(Targets.INSTAGRAM, left - 1L, UsageEvents.Event.MOVE_TO_FOREGROUND)
         idleWorker(Duration.ofMillis(PauseForegroundMonitor.POLL_MS))
         assertNull(packages.socialForeground())
         assertFalse(state(), Pause.consumeResumeAuthorization(context))
@@ -703,6 +712,14 @@ class PauseForegroundMonitorTest {
         assertFalse(Pause.consumeResumeAuthorization(context))
         controller!!.destroy()
         controller = null
+        // The timer remains. Its own one-off check still sees the bank last reported in front,
+        // so it waits again rather than resuming over it...
+        Pause.onTimer(context)
+        assertFalse(Pause.consumeResumeAuthorization(context))
+        assertEquals(1, shadowOf(context.getSystemService(AlarmManager::class.java)).scheduledAlarms.size)
+        // ...and resumes once Android reports the bank in the background.
+        event(bank, UsageEvents.Event.MOVE_TO_BACKGROUND)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(ForegroundPackages.STATE_MAX_MS))
         Pause.onTimer(context)
         assertTrue(Pause.consumeResumeAuthorization(context))
     }
@@ -753,12 +770,19 @@ class PauseForegroundMonitorTest {
         // Scrolling in YouTube produces no events: it stays in front until its own background event.
         assertTrue(packages.paymentForegroundAt(10_001L + ForegroundPackages.PAYMENT_HOLD_MS - 1L))
         assertEquals(Targets.YOUTUBE, packages.socialForeground())
-        // A hold that ends by timeout was never seen leaving (split screen): YouTube's older
-        // foreground no longer counts, only a fresh one does.
-        assertFalse(packages.paymentForegroundAt(10_001L + ForegroundPackages.PAYMENT_HOLD_MS))
-        assertNull(packages.socialForeground())
-        packages.accept(Targets.YOUTUBE, UsageEvents.Event.MOVE_TO_FOREGROUND, setOf(bank), 10_002L + ForegroundPackages.PAYMENT_HOLD_MS)
-        assertFalse(packages.paymentForegroundAt(10_002L + ForegroundPackages.PAYMENT_HOLD_MS))
+        assertTrue(packages.dueForRecheck(10_000L + ForegroundPackages.PAYMENT_HOLD_MS - 1L).isEmpty())
+        // A long hold never just times out: it is re-checked from its own foreground event.
+        val due = 10_000L + ForegroundPackages.PAYMENT_HOLD_MS
+        assertTrue(packages.paymentForegroundAt(due))
+        assertEquals(mapOf(bank to 10_000L), packages.dueForRecheck(due))
+        packages.recheck(bank, null, setOf(bank), due)
+        assertTrue(packages.paymentForegroundAt(due + 1L))
+        assertTrue(packages.dueForRecheck(due + ForegroundPackages.PAYMENT_HOLD_MS - 1L).isEmpty())
+        // The next re-check still reads from the original foreground event.
+        assertEquals(mapOf(bank to 10_000L), packages.dueForRecheck(due + ForegroundPackages.PAYMENT_HOLD_MS))
+        // Only a real background event releases it; YouTube, seen in front, still counts.
+        packages.recheck(bank, 20_000L, setOf(bank), due + ForegroundPackages.PAYMENT_HOLD_MS)
+        assertFalse(packages.paymentForegroundAt(due + ForegroundPackages.PAYMENT_HOLD_MS))
         assertEquals(Targets.YOUTUBE, packages.socialForeground())
         packages.accept("com.example.unrelated", UsageEvents.Event.MOVE_TO_BACKGROUND, setOf(bank), 50_000L)
         assertEquals(Targets.YOUTUBE, packages.socialForeground())
@@ -879,9 +903,10 @@ class PauseForegroundMonitorTest {
         packages.accept(Targets.INSTAGRAM, UsageEvents.Event.MOVE_TO_FOREGROUND, setOf(bank), 11_000L)
         assertTrue(packages.paymentForegroundAt(11_000L))
         assertTrue(packages.paymentForegroundAt(10_000L + ForegroundPackages.PAYMENT_HOLD_MS))
-        // The seed times out without a background event: Instagram's older foreground goes with it.
-        assertFalse(packages.paymentForegroundAt(10_001L + ForegroundPackages.PAYMENT_HOLD_MS))
-        assertNull(packages.socialForeground())
+        // No timeout: still held past ten minutes, and re-checked from the pause start.
+        assertTrue(packages.paymentForegroundAt(10_001L + ForegroundPackages.PAYMENT_HOLD_MS * 3))
+        assertEquals(mapOf(bank to 10_000L), packages.dueForRecheck(10_001L + ForegroundPackages.PAYMENT_HOLD_MS * 3))
+        assertEquals(Targets.INSTAGRAM, packages.socialForeground())
     }
 
     @Test fun `a sticky restart long after the starting app left releases its seed from that app's own events`() {

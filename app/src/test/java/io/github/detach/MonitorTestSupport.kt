@@ -10,6 +10,8 @@ internal object MonitorTestSupport {
     fun reset() {
         PauseForegroundMonitor::class.java.getDeclaredField("requestedAt").apply { isAccessible = true }.setLong(null, Long.MIN_VALUE)
         PauseForegroundMonitor::class.java.getDeclaredField("active").apply { isAccessible = true }.set(null, null)
+        PauseForegroundMonitor::class.java.getDeclaredField("paymentLeftFor").apply { isAccessible = true }.set(null, null)
+        PauseForegroundMonitor::class.java.getDeclaredField("paymentLeftAt").apply { isAccessible = true }.setLong(null, Long.MIN_VALUE)
         Pause::class.java.getDeclaredField("socialResumeAt").apply { isAccessible = true }.setLong(null, Long.MIN_VALUE)
         Pause::class.java.getDeclaredField("rebinds").apply { isAccessible = true }.setInt(null, 0)
         Pause::class.java.getDeclaredField("rebindInFlight").apply { isAccessible = true }.setBoolean(null, false)

@@ -28,7 +28,9 @@ import java.util.UUID
  * works, but turning Detach back on is done by hand in Accessibility settings.
  *
  * A single timer may resume a valid same-boot pause. The optional Usage Access monitor checks
- * packages only while paused. Without it, the timer cannot know whether banking has finished.
+ * packages only while paused. With Usage Access granted, every automatic resume first makes one
+ * bounded package-only query and waits while a selected app was last reported in front; without
+ * it, the timer cannot know whether banking has finished.
  * Boot, updates and opening the app never create or renew automatic authorization.
  */
 object Pause {
@@ -36,8 +38,13 @@ object Pause {
     const val MAX_MS = 60 * 60_000L
     const val RESUME_AUTHORIZATION_MS = 3 * 60_000L
     internal const val AUTOMATIC_DELAY_MS = MAX_MS
-    /** How often a due timer looks again while the phone is locked. */
+    /** How soon a lost or overdue timer is set again (see [remind]), and the first locked retry. */
     internal const val LOCKED_RETRY_MS = 30_000L
+    /**
+     * How long a due timer waits before looking again while the phone stays locked: each locked
+     * look backs off one step, up to the last. Unlocking (any unlocked look) starts over.
+     */
+    internal val LOCKED_RETRIES_MS = longArrayOf(LOCKED_RETRY_MS, 60_000L, 2 * 60_000L, 5 * 60_000L)
     /** A locked phone defers the timer only while this much automatic authority is left. */
     internal const val LOCKED_DEFER_MARGIN_MS = 20 * 60_000L
     /**
@@ -94,6 +101,8 @@ object Pause {
     private const val KEY_ALARM_TARGET = "alarm_target"
     private const val KEY_ALARM_LATEST_ELAPSED = "alarm_latest_elapsed"
     private const val KEY_ALARM_BOOT = "alarm_boot"
+    /** Locked looks in a row by a due timer (see [LOCKED_RETRIES_MS]). */
+    private const val KEY_LOCKED_RETRIES = "locked_retries"
 
     private fun prefs(context: Context) = context.getSharedPreferences("pause", Context.MODE_PRIVATE)
 
@@ -169,7 +178,7 @@ object Pause {
             .putLong(KEY_ELAPSED, SystemClock.elapsedRealtime()).putInt(KEY_BOOT, bootCount(app))
             .putLong(KEY_DURATION, duration).putBoolean(KEY_ATTEMPTED, false)
             .putString(KEY_PAYMENT, payment).putBoolean(KEY_PAYMENT_IN_FRONT, payment != null && paymentInFront)
-            .removeLegacySuppression().removeResumeAuthorization().commit()
+            .remove(KEY_LOCKED_RETRIES).removeLegacySuppression().removeResumeAuthorization().commit()
         if (!saved) {
             stored.edit().remove(KEY_UNTIL).remove(KEY_STARTED).remove(KEY_TOKEN).removeResumeAuthorization().commit()
             return false
@@ -273,17 +282,24 @@ object Pause {
         finishInterruptedRebind(context)
         val token = automaticToken(context)
         if (token != null && timerDue(context)) {
+            val locked = phoneLocked(context)
+            if (!locked) runCatching { prefs(context).edit().remove(KEY_LOCKED_RETRIES).apply() }
             when {
                 PauseForegroundMonitor.paymentIsKnown(context) ->
                     scheduleAlarm(context, WallClock.now() + ForegroundPackages.STATE_MAX_MS, stepped = false)
-                deferWhileLocked(context) -> {
-                    scheduleAlarm(context, WallClock.now() + LOCKED_RETRY_MS, stepped = false)
+                locked && deferWhileLocked(context) -> {
+                    scheduleAlarm(context, WallClock.now() + lockedRetryDelay(context), stepped = false)
                     // Best effort: if app detection was lost, bring it back so that after the
                     // unlock it can hold the pause while a payment app is in front. Android 12+
                     // usually refuses a foreground start from an inexact alarm; then nothing changes.
                     PauseForegroundMonitor.reattach(context)
                 }
-                else -> resumeAutomatically(context, token)
+                // Also the locked fallback once the margin is reached: a selected app that Android
+                // last reported in front defers it too.
+                else -> resumeAutomatically(context, token) {
+                    val retry = if (locked) lockedRetryDelay(context) else ForegroundPackages.STATE_MAX_MS
+                    scheduleAlarm(context, WallClock.now() + retry, stepped = false)
+                }
             }
         } else if (token != null) {
             // The wall clock can reach the end time a little before elapsed time does (a clock
@@ -295,20 +311,30 @@ object Pause {
         remind(context)
     }
 
+    /** The screen is off or the keyguard is locked. Unreadable counts as unlocked. */
+    private fun phoneLocked(context: Context): Boolean = !runCatching {
+        context.getSystemService(PowerManager::class.java)?.isInteractive == true &&
+            context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == false
+    }.getOrDefault(true)
+
     /**
      * While the screen is off or locked the front app is unknown, and a payment app left open
      * (a PIN or OTP screen) checks accessibility again as soon as the phone is unlocked. Instagram
      * and YouTube cannot be used while locked, so the timer waits for an unlock instead of turning
-     * Detach on behind the lock screen. Bounded: once less than [LOCKED_DEFER_MARGIN_MS] of the
-     * pause's automatic authority is left it resumes anyway, so a pause never outlives it just
-     * because the phone stayed in a pocket.
+     * Detach on behind the lock screen, looking again less often the longer the phone stays
+     * locked ([LOCKED_RETRIES_MS]). Bounded: once less than [LOCKED_DEFER_MARGIN_MS] of the
+     * pause's automatic authority is left it resumes anyway (unless a selected app is known to be
+     * in front), so a pause never outlives it just because the phone stayed in a pocket.
      */
-    private fun deferWhileLocked(context: Context): Boolean {
-        val unlocked = runCatching {
-            context.getSystemService(PowerManager::class.java)?.isInteractive == true &&
-                context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == false
-        }.getOrDefault(true)
-        return !unlocked && SystemClock.elapsedRealtime() + LOCKED_DEFER_MARGIN_MS < automaticDeadlineElapsed(context)
+    private fun deferWhileLocked(context: Context): Boolean =
+        SystemClock.elapsedRealtime() + LOCKED_DEFER_MARGIN_MS < automaticDeadlineElapsed(context)
+
+    /** The next locked retry delay, one backoff step further than the last. */
+    private fun lockedRetryDelay(context: Context): Long {
+        val stored = runCatching { prefs(context) }.getOrNull() ?: return LOCKED_RETRY_MS
+        val step = runCatching { stored.getInt(KEY_LOCKED_RETRIES, 0) }.getOrDefault(0).coerceIn(0, LOCKED_RETRIES_MS.size - 1)
+        runCatching { stored.edit().putInt(KEY_LOCKED_RETRIES, step + 1).apply() }
+        return LOCKED_RETRIES_MS[step]
     }
 
     /**
@@ -323,10 +349,7 @@ object Pause {
         if (token != automaticToken(context) || paymentForeground ||
             !Settings(context).resumeOnSocialForeground || !PauseForegroundMonitor.hasUsageAccess(context)) return
         val social = packageName in Targets.PACKAGES
-        if (social || settled && timerDue(context)) {
-            if (social) socialResumeAt = SystemClock.elapsedRealtime()
-            resumeAutomatically(context, token)
-        }
+        if (social || settled && timerDue(context)) resumeAutomatically(context, token, social = social)
     }
 
     /** When the monitor last resumed because Instagram/YouTube was in front (this process only). */
@@ -352,13 +375,25 @@ object Pause {
             .orEmpty().split(':').any { ComponentName.unflattenFromString(it) == service }
     }.getOrDefault(true)
 
-    private fun resumeAutomatically(context: Context, token: String): Boolean {
+    /**
+     * Every automatic resume goes through here. [social]: Instagram/YouTube was seen in front.
+     * [onPaymentInFront]: runs instead of resuming when a selected app is known to be in front
+     * ([PauseForegroundMonitor.paymentLeftInFront]); the caller looks again later.
+     */
+    private fun resumeAutomatically(
+        context: Context, token: String, social: Boolean = false, onPaymentInFront: () -> Unit = {},
+    ): Boolean {
         if (token != automaticToken(context)) return false
         // Listed means a reconnect is already on its way, unless nothing is connecting it: no
         // unexpired request is waiting and the service isn't running (Android lost the bind,
         // for example when Detach's process was killed mid-resume). Then the timer may still
         // request one, and resume() forces Android to rebind.
         if (serviceListed(context) && (DetachService.isRunning || resumeAuthorized(context))) return false
+        if (canSelfEnable(context) && PauseForegroundMonitor.paymentLeftInFront(context)) {
+            onPaymentInFront()
+            return false
+        }
+        if (social) socialResumeAt = SystemClock.elapsedRealtime()
         val stored = prefs(context)
         if (!stored.edit().putBoolean(KEY_ATTEMPTED, true).commit()) return false
         if (!canSelfEnable(context)) {
@@ -484,7 +519,7 @@ object Pause {
         cancelAlarms(app)
         prefs(app).edit().remove(KEY_UNTIL).remove(KEY_STARTED).remove(KEY_TOKEN).remove(KEY_ELAPSED)
             .remove(KEY_BOOT).remove(KEY_DURATION).remove(KEY_ATTEMPTED).remove(KEY_PAYMENT).remove(KEY_PAYMENT_IN_FRONT)
-            .removeLegacySuppression().removeResumeAuthorization().commit()
+            .remove(KEY_LOCKED_RETRIES).removeLegacySuppression().removeResumeAuthorization().commit()
         PauseForegroundMonitor.stop(app)
         refreshNotification(app)
     }

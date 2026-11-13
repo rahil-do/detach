@@ -61,7 +61,7 @@ keyAlias=detach
 keyPassword=…
 ```
 
-Without that file, `assembleRelease` falls back to the debug key. **Don't share debug-signed builds.**
+Without that file there is no release signing config, so `assembleRelease` produces an **unsigned** APK that Android won't install; `scripts/release.sh` refuses to run without it.
 
 **Back up the `.jks` file and `keystore.properties` somewhere safe** (password manager, encrypted drive). Every future update must be signed with the same key. If the key is lost, everyone has to uninstall Detach (losing their settings and password) before installing a build signed with a new key.
 

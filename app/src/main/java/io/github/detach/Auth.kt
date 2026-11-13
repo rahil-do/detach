@@ -40,6 +40,25 @@ object Auth {
         }.getOrDefault(false)
     }
 
+    /**
+     * A fingerprint (or other biometric) is set up, even if Android can't use it right now
+     * (sensor busy or temporarily unavailable). Only "no sensor" or "nothing enrolled" is false:
+     * a temporary problem must not count as "the phone has no fingerprint".
+     */
+    fun biometricEnrolled(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return false
+        return runCatching {
+            val bm = context.getSystemService(BiometricManager::class.java) ?: return@runCatching false
+            val result = if (Build.VERSION.SDK_INT >= 30) {
+                bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+            } else {
+                @Suppress("DEPRECATION")
+                bm.canAuthenticate()
+            }
+            result == BiometricManager.BIOMETRIC_SUCCESS || result == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE
+        }.getOrDefault(false)
+    }
+
     /** Something exists to confirm with. If not, callers decide what "unprotected" means. */
     fun available(context: Context) = Lock(context).isSet || biometricAvailable(context)
 
@@ -143,6 +162,9 @@ object Auth {
             .setPositiveButton(positive, null)
             .setNegativeButton("Cancel", null)
             .create()
+        // Cancel, Back or a tap outside: a password check still running must not count afterwards.
+        var closed = false
+        dialog.setOnDismissListener { closed = true }
         dialog.setOnShowListener {
             Ui(activity).style(dialog)
             val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
@@ -152,6 +174,7 @@ object Auth {
                 val typed = input.text.toString()
                 ok.isEnabled = false
                 HashWorker.run(input, { lock.verify(typed) }) { good ->
+                    if (closed || !dialog.isShowing) return@run
                     ok.isEnabled = true
                     if (good) {
                         dialog.dismiss()
