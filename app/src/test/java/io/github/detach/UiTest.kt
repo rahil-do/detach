@@ -42,6 +42,7 @@ class UiTest {
     private val context get() = RuntimeEnvironment.getApplication()
 
     @Before fun reset() {
+        MonitorTestSupport.reset()
         for (name in listOf("settings", "lock", "pause")) context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit()
         SystemSettings.Global.putFloat(context.contentResolver, SystemSettings.Global.ANIMATOR_DURATION_SCALE, 0f)
         SystemSettings.Secure.putString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
@@ -197,6 +198,54 @@ class UiTest {
         enable.performClick()
         assertFalse(dialog.isShowing)
         assertFalse(Settings(activity).resumeOnSocialForeground)
+    }
+
+    @Test fun `enabling app detection during a pending pause starts it for that pause at once`() {
+        shadowOf(context).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        shadowOf(context.getSystemService(AppOpsManager::class.java)).setMode(
+            AppOpsManager.OPSTR_GET_USAGE_STATS, context.applicationInfo.uid, context.packageName, AppOpsManager.MODE_ALLOWED,
+        )
+        assertTrue(Pause.begin(context))
+        assertNull(shadowOf(context).nextStartedService)
+        val token = Pause.automaticToken(context)
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        assertNull(shadowOf(context).nextStartedService)
+        disclosure(activity, "payment-options").performClick()
+        toggle(activity, "Resume when Instagram or YouTube opens").performClick()
+        ShadowAlertDialog.getLatestAlertDialog().getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        val started = shadowOf(context).nextStartedService
+        assertEquals(PauseForegroundMonitor::class.java.name, started.component?.className)
+        assertEquals(token, started.getStringExtra("pause_token"))
+        assertEquals(token, Pause.automaticToken(context))
+        assertFalse(Pause.consumeResumeAuthorization(context))
+    }
+
+    @Test fun `payments explain that the one time USB grant survives turning developer options off`() {
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.DEVELOPMENT_SETTINGS_ENABLED, 1)
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.ADB_ENABLED, 1)
+        shadowOf(context).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        var activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        var note = (views(activity).first { it.tag == "developer-options" } as ViewGroup)
+        var text = (0 until note.childCount).map { note.getChildAt(it) }.filterIsInstance<TextView>().joinToString(" ") { it.text }
+        assertTrue(text, text.contains("USB debugging or Developer options are on"))
+        assertTrue(text, text.contains("Some UPI and bank apps refuse"))
+        assertTrue(text, text.contains("one-time"))
+        assertTrue(text, text.contains("keeps working"))
+        // The grant survives restarts; a pause running during one does not resume by itself.
+        assertFalse(text, text.contains("automatic resume keeps working"))
+        assertTrue(text, text.contains("still needs a tap on Resume protection"))
+        views(activity).filterIsInstance<Button>().first { it.text == "Open Developer options" }.performClick()
+        assertEquals(SystemSettings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS, shadowOf(activity).nextStartedActivity.action)
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0)
+        SystemSettings.Global.putInt(context.contentResolver, SystemSettings.Global.ADB_ENABLED, 0)
+        shadowOf(context).denyPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+        activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        note = (views(activity).first { it.tag == "developer-options" } as ViewGroup)
+        text = (0 until note.childCount).map { note.getChildAt(it) }.filterIsInstance<TextView>().joinToString(" ") { it.text }
+        assertTrue(text, text.startsWith("Some UPI and bank apps refuse"))
+        assertTrue(text, text.contains("only while you run its command once"))
+        assertTrue(views(activity).filterIsInstance<Button>().none { it.text == "Open Developer options" })
     }
 
     @Test fun `accepted monitor consent changes only the opt in without starting a watcher`() {

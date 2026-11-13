@@ -93,7 +93,7 @@ object Pause {
     fun isExpired(context: Context): Boolean {
         val until = until(context)
         if (until == 0L) return false
-        val now = System.currentTimeMillis()
+        val now = WallClock.now()
         return now >= until || until - now > MAX_MS + 60_000L
     }
 
@@ -134,7 +134,7 @@ object Pause {
     @Synchronized
     internal fun record(context: Context, paymentPackage: String? = null, paymentInFront: Boolean = false): Boolean {
         val app = context.applicationContext
-        val now = System.currentTimeMillis()
+        val now = WallClock.now()
         val duration = durationMs(app)
         val until = now + duration
         val stored = prefs(app)
@@ -170,11 +170,15 @@ object Pause {
     fun resume(context: Context): Boolean {
         val app = context.applicationContext
         if (!isPending(app)) return true
-        PauseForegroundMonitor.stop(app)
-        if (!prefs(app).edit().putLong(KEY_RESUME_AUTHORIZED_AT, System.currentTimeMillis())
+        // The optional monitor keeps running (and keeps the process in the foreground) until the
+        // reconnect is authorized and requested. If recording the authorization fails it stays
+        // only while the pause can still use it (a manual tap); an automatic attempt has already
+        // spent the pause's automatic authority.
+        if (!prefs(app).edit().putLong(KEY_RESUME_AUTHORIZED_AT, WallClock.now())
                 .putLong(KEY_RESUME_AUTHORIZED_ELAPSED, SystemClock.elapsedRealtime())
                 .putInt(KEY_RESUME_BOOT_COUNT, bootCount(app)).commit()) {
             prefs(app).edit().removeResumeAuthorization().commit()
+            if (automaticToken(app) == null) PauseForegroundMonitor.stop(app)
             refreshNotification(app)
             return false
         }
@@ -184,15 +188,17 @@ object Pause {
             refreshNotification(app)
             return true
         }
-        // Can't do it ourselves: the pause is over, and the notification now says so.
-        if (!isExpired(app)) prefs(app).edit().putLong(KEY_UNTIL, System.currentTimeMillis()).commit()
+        // Can't do it ourselves: the pause is over, and the notification now says so. App
+        // detection has nothing left to resume.
+        if (!isExpired(app)) prefs(app).edit().putLong(KEY_UNTIL, WallClock.now()).commit()
+        PauseForegroundMonitor.stop(app)
         refreshNotification(app)
         return false
     }
 
     internal fun automaticToken(context: Context): String? = runCatching {
         val stored = prefs(context)
-        val now = System.currentTimeMillis()
+        val now = WallClock.now()
         val elapsed = SystemClock.elapsedRealtime()
         val started = startedAt(context)
         val beganElapsed = stored.getLong(KEY_ELAPSED, -1L)
@@ -221,8 +227,13 @@ object Pause {
         startingPaymentPackage(context) != null && prefs(context).getBoolean(KEY_PAYMENT_IN_FRONT, false)
     }.getOrDefault(false)
 
+    /** Elapsed time left until the timer's elapsed half is due (at most [MAX_MS]). */
+    private fun elapsedUntilDue(context: Context): Long = runCatching {
+        prefs(context).getLong(KEY_ELAPSED, 0L) + prefs(context).getLong(KEY_DURATION, MAX_MS) - SystemClock.elapsedRealtime()
+    }.getOrDefault(MAX_MS).coerceAtMost(MAX_MS)
+
     internal fun timerDue(context: Context): Boolean = runCatching {
-        automaticToken(context) != null && System.currentTimeMillis() >= until(context) &&
+        automaticToken(context) != null && WallClock.now() >= until(context) &&
             SystemClock.elapsedRealtime() >= prefs(context).getLong(KEY_ELAPSED, Long.MAX_VALUE) +
             prefs(context).getLong(KEY_DURATION, MAX_MS)
     }.getOrDefault(false)
@@ -233,10 +244,22 @@ object Pause {
         if (token != null && timerDue(context)) {
             when {
                 PauseForegroundMonitor.paymentIsKnown(context) ->
-                    scheduleAlarm(context, System.currentTimeMillis() + ForegroundPackages.STATE_MAX_MS)
-                deferWhileLocked(context) -> scheduleAlarm(context, System.currentTimeMillis() + LOCKED_RETRY_MS)
+                    scheduleAlarm(context, WallClock.now() + ForegroundPackages.STATE_MAX_MS)
+                deferWhileLocked(context) -> {
+                    scheduleAlarm(context, WallClock.now() + LOCKED_RETRY_MS)
+                    // Best effort: if app detection was lost, bring it back so that after the
+                    // unlock it can hold the pause while a payment app is in front. Android 12+
+                    // usually refuses a foreground start from an inexact alarm; then nothing changes.
+                    PauseForegroundMonitor.reattach(context)
+                }
                 else -> resumeAutomatically(context, token)
             }
+        } else if (token != null) {
+            // The wall clock can reach the end time a little before elapsed time does (a clock
+            // correction): remind() schedules nothing once the end time has passed, so look
+            // again when the elapsed half is due.
+            if (isExpired(context)) scheduleAlarm(context, WallClock.now() + elapsedUntilDue(context).coerceAtLeast(1_000L))
+            PauseForegroundMonitor.reattach(context)
         }
         remind(context)
     }
@@ -269,8 +292,27 @@ object Pause {
         if (token != automaticToken(context) || paymentForeground ||
             !Settings(context).resumeOnSocialForeground || !PauseForegroundMonitor.hasUsageAccess(context)) return
         val social = packageName in Targets.PACKAGES
-        if (social || settled && timerDue(context)) resumeAutomatically(context, token)
+        if (social || settled && timerDue(context)) {
+            if (social) socialResumeAt = SystemClock.elapsedRealtime()
+            resumeAutomatically(context, token)
+        }
     }
+
+    /** When the monitor last resumed because Instagram/YouTube was in front (this process only). */
+    @Volatile private var socialResumeAt = Long.MIN_VALUE
+
+    /**
+     * The reconnect now starting followed a resume for Instagram/YouTube within a few seconds.
+     * Read once by the reconnecting service: right after such a resume, the active window can
+     * still be the payment app the owner just left, so it is re-read before pausing again.
+     */
+    internal fun takeRecentSocialResume(): Boolean {
+        val at = socialResumeAt
+        socialResumeAt = Long.MIN_VALUE
+        return at != Long.MIN_VALUE && SystemClock.elapsedRealtime() - at in 0..SOCIAL_RESUME_WINDOW_MS
+    }
+
+    private const val SOCIAL_RESUME_WINDOW_MS = 10_000L
 
     /** Detach's own service is listed in the enabled accessibility services. Unreadable counts as listed. */
     internal fun serviceListed(context: Context): Boolean = runCatching {
@@ -314,7 +356,7 @@ object Pause {
         val issuedAt = runCatching { stored.getLong(KEY_RESUME_AUTHORIZED_AT, 0L) }.getOrDefault(0L)
         val issuedElapsed = runCatching { stored.getLong(KEY_RESUME_AUTHORIZED_ELAPSED, -1L) }.getOrDefault(-1L)
         val issuedBoot = runCatching { stored.getInt(KEY_RESUME_BOOT_COUNT, -1) }.getOrDefault(-1)
-        val now = System.currentTimeMillis()
+        val now = WallClock.now()
         val elapsed = SystemClock.elapsedRealtime()
         val valid = isPending(context) && issuedAt > 0L && issuedAt <= now && now - issuedAt <= RESUME_AUTHORIZATION_MS &&
             issuedElapsed >= 0L && issuedElapsed <= elapsed && elapsed - issuedElapsed <= RESUME_AUTHORIZATION_MS &&

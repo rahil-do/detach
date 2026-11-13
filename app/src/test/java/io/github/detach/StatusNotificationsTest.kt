@@ -29,6 +29,7 @@ class StatusNotificationsTest {
     private val notifications get() = shadowOf(manager)
 
     @Before fun setup() {
+        MonitorTestSupport.reset()
         context.getSharedPreferences("pause", Context.MODE_PRIVATE).edit().clear().commit()
         context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().clear().commit()
         manager.cancelAll()

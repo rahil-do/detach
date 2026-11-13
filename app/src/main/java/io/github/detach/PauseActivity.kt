@@ -31,6 +31,9 @@ class PauseActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (!DetachService.isRunning) {
+            // Detach's own screen is in front, so Android allows app detection lost during this
+            // pause to be re-attached to it (same token and deadline).
+            if (Pause.isPending(this) && !Pause.isExpired(this)) PauseForegroundMonitor.reattach(this)
             Toast.makeText(
                 this,
                 if (Pause.isPending(this)) "Detach is already paused" else "Detach isn't running",

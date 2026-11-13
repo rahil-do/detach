@@ -14,6 +14,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -30,6 +31,8 @@ class AutomaticPauseTest {
     private val stored get() = context.getSharedPreferences("pause", Context.MODE_PRIVATE)
     private val others = "com.example.other/.Accessibility"
     private val bank = Targets.PAYMENT_DEFAULTS.first()
+
+    @Before fun resetStatics() = MonitorTestSupport.reset()
 
     private fun grant() {
         shadowOf(context).grantPermissions(Manifest.permission.WRITE_SECURE_SETTINGS)
@@ -79,6 +82,30 @@ class AutomaticPauseTest {
         assertFalse(shadowOf(alarm.operation).isCanceled)
         assertEquals(token, Pause.automaticToken(context))
         assertFalse(Pause.consumeResumeAuthorization(context))
+        Pause.onTimer(context)
+        assertTrue(Pause.consumeResumeAuthorization(context))
+    }
+
+    @Test fun `a timer that fires after a small clock correction but before elapsed time is due keeps a follow-up alarm`() {
+        grant()
+        begin()
+        val manager = shadowOf(context.getSystemService(AlarmManager::class.java))
+        // The wall clock was corrected 2 s forward: the end time has passed, elapsed time has not.
+        stored.edit().putLong("started", stored.getLong("started", 0L) - 60_001L)
+            .putLong("until", stored.getLong("until", 0L) - 60_001L).commit()
+        ShadowSystemClock.advanceBy(Duration.ofMillis(58_000L))
+        assertNotNull(Pause.automaticToken(context))
+        assertFalse(Pause.timerDue(context))
+        Pause.onTimer(context)
+        assertFalse(Pause.consumeResumeAuthorization(context))
+        // Without a follow-up nothing would ever resume automatically.
+        val retry = manager.scheduledAlarms.single()
+        assertTrue(retry.triggerAtTime > System.currentTimeMillis())
+        assertTrue(retry.triggerAtTime <= System.currentTimeMillis() + 3_000L)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(2_100L))
+        stored.edit().putLong("started", stored.getLong("started", 0L) - 2_100L)
+            .putLong("until", stored.getLong("until", 0L) - 2_100L).commit()
+        assertTrue(Pause.timerDue(context))
         Pause.onTimer(context)
         assertTrue(Pause.consumeResumeAuthorization(context))
     }

@@ -99,15 +99,23 @@ class DetachService : AccessibilityService() {
     override fun onServiceConnected() {
         if (Pause.isPending(this) && !Pause.consumeResumeAuthorization(this)) {
             stopProtection()
+            // Still bound, so Android allows the optional monitor to be brought back for the
+            // existing pause (it never authorizes anything itself).
+            PauseForegroundMonitor.reattach(this, whileServiceBound = true)
             Pause.refreshNotification(this)
             disableSelf()
             return
         }
         settings = Settings(this)
+        // Just resumed because Instagram/YouTube came to the front: the active window can still be
+        // the payment app the owner left a moment ago. Re-read it a little later instead of
+        // pausing on this first read (a selected app really in front still pauses within ~1 s).
+        val afterSocialResume = Pause.takeRecentSocialResume()
         // A timer or monitor resume can land while a selected app is still in front: pause again
         // straight away rather than start protecting it.
         val startupPackage = foreground()
-        if (Pause.shouldAutoPausePayment(this, startupPackage) && Pause.record(this, startupPackage, paymentInFront = true)) {
+        if (!afterSocialResume && Pause.shouldAutoPausePayment(this, startupPackage) &&
+            Pause.record(this, startupPackage, paymentInFront = true)) {
             stopProtection()
             disableSelf()
             Pause.afterRecorded(this)
@@ -141,10 +149,24 @@ class DetachService : AccessibilityService() {
         // Running again: any pause is over, and the "on" notification goes (back) up.
         Pause.onServiceStarted(this)
         refreshBreather()
+        connectedAt = SystemClock.uptimeMillis()
+        socialSettleUntil = if (afterSocialResume) connectedAt + SOCIAL_RESUME_CHECKS_MS[0] else 0L
         // Right after binding the active window is often not available yet, so the check above
         // can miss a selected app that is already open. Look again, by package name only.
-        scheduleForegroundChecks()
+        scheduleForegroundChecks(if (afterSocialResume) SOCIAL_RESUME_CHECKS_MS else FOREGROUND_CHECKS_MS)
     }
+
+    /** uptimeMillis of the last successful startup, or 0. */
+    @Volatile private var connectedAt = 0L
+    /** After a resume for Instagram/YouTube: until then a selected app's window is not trusted yet. */
+    @Volatile private var socialSettleUntil = 0L
+
+    /**
+     * Just (re)connected: window events now are mostly transitions of whatever was in front a
+     * moment ago (for example the payment app the owner just left for Instagram).
+     */
+    private fun justConnected(): Boolean =
+        connectedAt != 0L && SystemClock.uptimeMillis() - connectedAt in 0 until STARTUP_GRACE_MS
 
     /**
      * "Pause for payments": records the pause, schedules the reminder, swaps the notification,
@@ -218,6 +240,10 @@ class DetachService : AccessibilityService() {
         if (pausing || !::worker.isInitialized) return
         // One active-window read per event; its package is passed on rather than read again.
         val activePackage = foreground()
+        // Moments after a resume for Instagram/YouTube, a selected app as the active window (or
+        // as the sender) is most likely the one just left; the scheduled startup re-checks decide.
+        if (SystemClock.uptimeMillis() < socialSettleUntil &&
+            (Pause.shouldAutoPausePayment(this, activePackage) || Pause.shouldAutoPausePayment(this, pkg))) return
         if (pauseIfPayment(activePackage, confirmed = true)) return
         if (pkg != activePackage && Pause.shouldAutoPausePayment(this, pkg)) {
             onSelectedAppEvent(pkg, activePackage)
@@ -301,16 +327,18 @@ class DetachService : AccessibilityService() {
      * starts (select the app you pay from, or "Pause and open" from the tile or notification).
      */
     private fun onSelectedAppEvent(pkg: String, activePackage: String?) {
-        if (activePackage == null) pauseNow(pkg) else scheduleForegroundChecks()
+        // Right after connecting, an event with no active window is usually the exit transition of
+        // the app just left, so it needs the selected app's own window like any other case.
+        if (activePackage == null && !justConnected()) pauseNow(pkg) else scheduleForegroundChecks()
     }
 
     private val foregroundChecks = Any()
 
     /** Main thread. Package-only re-checks of the active window, bounded to about a second. */
-    private fun scheduleForegroundChecks() {
+    private fun scheduleForegroundChecks(delays: LongArray = FOREGROUND_CHECKS_MS) {
         if (pausing) return
         main.removeCallbacksAndMessages(foregroundChecks)
-        for (delay in FOREGROUND_CHECKS_MS) {
+        for (delay in delays) {
             main.postDelayed({
                 if (!pausing && pauseIfPayment(foreground(), confirmed = true)) main.removeCallbacksAndMessages(foregroundChecks)
             }, foregroundChecks, delay)
@@ -655,6 +683,12 @@ class DetachService : AccessibilityService() {
 
         /** When to look again for a selected app that isn't the active window yet. */
         internal val FOREGROUND_CHECKS_MS = longArrayOf(50, 150, 300, 600, 1000)
+
+        /** After a resume for Instagram/YouTube: the first re-read waits out the window switch. */
+        internal val SOCIAL_RESUME_CHECKS_MS = longArrayOf(400, 700, 1000)
+
+        /** After connecting, how long an event with no active window cannot pause by itself. */
+        internal const val STARTUP_GRACE_MS = 1_000L
 
         /**
          * The connected service, for the rest of the app (same process) to talk to. Set in

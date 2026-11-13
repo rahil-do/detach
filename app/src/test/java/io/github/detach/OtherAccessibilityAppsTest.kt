@@ -29,7 +29,7 @@ import org.robolectric.shadows.ShadowBiometricManager
 @Config(sdk = [35])
 class OtherAccessibilityAppsTest {
     private val context get() = RuntimeEnvironment.getApplication()
-    private val kde = "org.kde.kdeconnect_tp/org.kde.kdeconnect.KdeConnectAccessibilityService"
+    private val remote = "com.example.remote/com.example.remote.RemoteInputService"
     private val menu = "com.android.systemui.accessibility.accessibilitymenu/.AccessibilityMenuService"
     private val detach = "io.github.detach/io.github.detach.DetachService"
 
@@ -37,7 +37,7 @@ class OtherAccessibilityAppsTest {
         for (name in listOf("settings", "lock", "pause")) context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit()
         SystemSettings.Global.putFloat(context.contentResolver, SystemSettings.Global.ANIMATOR_DURATION_SCALE, 0f)
         Shadow.extract<ShadowBiometricManager>(context.getSystemService(BiometricManager::class.java)).setCanAuthenticate(false)
-        install("org.kde.kdeconnect_tp", "KDE Connect", system = false)
+        install("com.example.remote", "Remote Input", system = false)
         install("com.android.systemui.accessibility.accessibilitymenu", "Accessibility Menu", system = true)
     }
 
@@ -57,8 +57,8 @@ class OtherAccessibilityAppsTest {
         SystemSettings.Secure.putString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES, value)
 
     @Test fun `only other installed non system services are named by app label`() {
-        enabled("$menu:$kde:$detach:com.example.uninstalled/.Service:not a component::$kde")
-        assertEquals(listOf("KDE Connect"), OtherAccessibilityApps.labels(context))
+        enabled("$menu:$remote:$detach:com.example.uninstalled/.Service:not a component::$remote")
+        assertEquals(listOf("Remote Input"), OtherAccessibilityApps.labels(context))
     }
 
     @Test fun `nothing is listed when only Detach and system services are on`() {
@@ -69,10 +69,10 @@ class OtherAccessibilityAppsTest {
     }
 
     @Test fun `reading other services never changes the enabled list`() {
-        enabled("$kde:$detach")
+        enabled("$remote:$detach")
         OtherAccessibilityApps.labels(context)
         Robolectric.buildActivity(MainActivity::class.java).setup()
-        assertEquals("$kde:$detach", SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES))
+        assertEquals("$remote:$detach", SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES))
     }
 
     @Test @Config(qualifiers = "notnight") fun `light payments section warns about other accessibility apps readably`() {
@@ -102,13 +102,13 @@ class OtherAccessibilityAppsTest {
     }
 
     private fun assertWarning() {
-        enabled("$menu:$kde:$detach")
+        enabled("$menu:$remote:$detach")
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val ui = Ui(activity)
         val warning = activity.window.decorView.findViewWithTag<ViewGroup>("other-accessibility")
         assertEquals(View.VISIBLE, warning.visibility)
         val texts = views(warning).filterIsInstance<TextView>()
-        val note = texts.first { it.text.contains("KDE Connect") }
+        val note = texts.first { it.text.contains("Remote Input") }
         assertFalse(note.text.contains("Accessibility Menu"))
         assertTrue(note.text.contains("Detach can only switch itself off"))
         assertEquals(ui.sub, note.currentTextColor)
@@ -118,7 +118,7 @@ class OtherAccessibilityAppsTest {
         assertTrue(open.minimumHeight >= ui.dp(48))
         open.performClick()
         assertEquals(SystemSettings.ACTION_ACCESSIBILITY_SETTINGS, shadowOf(activity).nextStartedActivity.action)
-        assertEquals("$menu:$kde:$detach", SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES))
+        assertEquals("$menu:$remote:$detach", SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES))
     }
 
     private fun views(view: View): List<View> = listOf(view) + if (view is ViewGroup) {

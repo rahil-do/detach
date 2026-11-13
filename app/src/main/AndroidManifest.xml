@@ -103,10 +103,15 @@
             </intent-filter>
         </receiver>
 
+        <!--
+          Optional payment-pause app detection. stopWithTask="false": swiping Detach (or "Clear
+          all") out of Recents while closing the payment app must not end detection; with it on,
+          Android stopped the monitor and then killed the process. Not exported.
+        -->
         <service
             android:name=".PauseForegroundMonitor"
             android:exported="false"
-            android:stopWithTask="true"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

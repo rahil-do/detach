@@ -76,6 +76,7 @@ class DetachServiceTest {
     private lateinit var cover: FeedCover
 
     @Before fun setup() {
+        MonitorTestSupport.reset()
         ForegroundServiceShadow.reset()
         service = Robolectric.buildService(DetachService::class.java).create().get()
         val settings = Settings(service)
@@ -429,6 +430,7 @@ class DetachServiceConnectionTest {
     private lateinit var service: DetachService
 
     @Before fun setup() {
+        MonitorTestSupport.reset()
         ForegroundServiceShadow.reset(AccessibilityNodeInfo.obtain().apply { packageName = Targets.INSTAGRAM })
         service = Robolectric.buildService(DetachService::class.java).create().get()
     }
@@ -583,6 +585,58 @@ class DetachServiceConnectionTest {
         assertTrue(ForegroundServiceShadow.disabled)
         assertTrue(Pause.isPending(service))
         assertFalse(DetachService.isRunning)
+    }
+
+    @Test fun `a selected app event with no active window right after connecting waits for its own window`() {
+        root(null)
+        connect()
+        idleWorker()
+        // Typically the exit transition of the payment app the owner just left.
+        service.onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply { packageName = "com.phonepe.app" })
+        assertFalse(ForegroundServiceShadow.disabled)
+        root(Targets.INSTAGRAM)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(DetachService.STARTUP_GRACE_MS + 1))
+        assertFalse(ForegroundServiceShadow.disabled)
+        assertTrue(DetachService.isRunning)
+        // After the grace an event with no active window pauses at once, as before.
+        root(null)
+        service.onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply { packageName = "com.phonepe.app" })
+        assertTrue(ForegroundServiceShadow.disabled)
+    }
+
+    private fun markSocialResume() {
+        Pause::class.java.getDeclaredField("socialResumeAt").apply { isAccessible = true }
+            .setLong(null, android.os.SystemClock.elapsedRealtime())
+    }
+
+    @Test fun `right after a resume for Instagram a stale payment window is read again before pausing`() {
+        Pause.begin(service)
+        authorizeResume()
+        markSocialResume()
+        root("com.phonepe.app")
+        connect()
+        assertFalse(ForegroundServiceShadow.disabled)
+        assertTrue(DetachService.isRunning)
+        service.onAccessibilityEvent(AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED).apply { packageName = "com.phonepe.app" })
+        assertFalse(ForegroundServiceShadow.disabled)
+        // Instagram takes focus: the payment app was only the window being left.
+        root(Targets.INSTAGRAM)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertFalse(ForegroundServiceShadow.disabled)
+        assertFalse(Pause.isPending(service))
+    }
+
+    @Test fun `right after a resume for Instagram a payment app really in front still pauses`() {
+        Pause.begin(service)
+        authorizeResume()
+        markSocialResume()
+        root("com.phonepe.app")
+        connect()
+        assertFalse(ForegroundServiceShadow.disabled)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(DetachService.SOCIAL_RESUME_CHECKS_MS.first()))
+        assertTrue(ForegroundServiceShadow.disabled)
+        assertTrue(Pause.isPending(service))
+        assertTrue(Pause.startingPaymentWasInFront(service))
     }
 
     @Test fun `startup re-checks stop after about a second and never pause a social app`() {

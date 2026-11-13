@@ -39,6 +39,7 @@ class PauseActivityTest {
     private val detach get() = ComponentName(context, DetachService::class.java).flattenToString()
 
     @Before fun reset() {
+        MonitorTestSupport.reset()
         for (name in listOf("settings", "lock", "pause")) context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit()
         Shadow.extract<ShadowBiometricManager>(context.getSystemService(BiometricManager::class.java)).setCanAuthenticate(false)
         ForegroundServiceShadow.reset()

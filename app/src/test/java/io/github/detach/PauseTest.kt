@@ -12,6 +12,7 @@ import android.provider.Settings as Sys
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -31,6 +32,8 @@ class PauseTest {
     private val others = "com.android.systemui.accessibility.accessibilitymenu/.AccessibilityMenuService:org.kde.kdeconnect_tp/org.kde.kdeconnect.KdeConnectAccessibilityService"
     private val me = "io.github.detach/io.github.detach.DetachService"
     private val authorizationKey = "resume_authorized_at"
+
+    @Before fun resetStatics() = MonitorTestSupport.reset()
 
     private fun enabledList() = Sys.Secure.getString(ctx.contentResolver, Sys.Secure.ENABLED_ACCESSIBILITY_SERVICES)
     private fun setEnabledList(v: String) = Sys.Secure.putString(ctx.contentResolver, Sys.Secure.ENABLED_ACCESSIBILITY_SERVICES, v)

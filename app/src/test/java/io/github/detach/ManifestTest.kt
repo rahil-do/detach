@@ -125,6 +125,17 @@ class ManifestTest {
         assertFalse(monitor.exported)
     }
 
+    @Test fun `swiping Detach out of Recents does not stop payment pause app detection`() {
+        // With stopWithTask, removing the task stopped the monitor and Android then killed the
+        // process, so Instagram/YouTube could never resume protection (seen on a real phone).
+        val monitor = info.services.orEmpty().single { it.name.endsWith(".PauseForegroundMonitor") }
+        assertEquals(0, monitor.flags and android.content.pm.ServiceInfo.FLAG_STOP_WITH_TASK)
+        val manifest = java.io.File("src/main/AndroidManifest.xml").takeIf { it.exists() }
+            ?: java.io.File("app/src/main/AndroidManifest.xml")
+        val declaration = Regex("<service[^>]*PauseForegroundMonitor[^>]*>").find(manifest.readText())!!.value
+        assertTrue(declaration.contains("android:stopWithTask=\"false\""))
+    }
+
     @Test fun `permission surface is limited to local authentication reminders and explicit resume`() {
         assertEquals(
             setOf(

@@ -103,8 +103,20 @@ class MainActivity : Activity() {
         super.onResume()
         visitActive = true
         Pause.resumeIfDue(this)
+        rearmDetection()
         Pause.refreshNotification(this)
+        PauseForegroundMonitor.clearOrphanNotification(this, fromVisibleActivity = true)
         render()
+    }
+
+    /**
+     * While Detach is in front Android allows it to start the optional monitor, so app detection
+     * lost during this pause (process killed, swiped away on an older build, start refused, or
+     * opt-in/Usage Access completed only now) is re-attached to the pause's existing authority.
+     * Before the timer is due only: opening Detach never spends due timer authority.
+     */
+    private fun rearmDetection() {
+        if (Pause.isPending(this) && !Pause.isExpired(this)) PauseForegroundMonitor.reattach(this)
     }
 
     override fun onPause() {
@@ -220,7 +232,11 @@ class MainActivity : Activity() {
         val detail = when {
             paused && serviceEnabled() -> "Resume requested. Waiting for Android to reconnect; protection is not confirmed yet."
             paused && Pause.isExpired(this) -> "The pause timer is due. If automatic resume is unavailable or delayed, use Resume protection."
-            paused && Pause.resumesAutomatically(this) -> "Automatic resume after ${Pause.untilText(this)}. You can resume sooner below."
+            paused && PauseForegroundMonitor.wanted(this) && PauseForegroundMonitor.runningOrStarting() ->
+                "Resumes when Instagram or YouTube opens (never while a selected payment app is in front), or automatically after ${Pause.untilText(this)}. Android may deliver the timer late. You can resume sooner below."
+            paused && PauseForegroundMonitor.wanted(this) ->
+                "App detection could not start, so opening Instagram or YouTube won't resume protection. Automatic resume after ${Pause.untilText(this)}. You can resume sooner below."
+            paused && Pause.resumesAutomatically(this) -> "Automatic resume after ${Pause.untilText(this)}. Android may deliver it a little late. You can resume sooner below."
             paused && Pause.canSelfEnable(this) -> "Reminder at ${Pause.untilText(this)}. After a restart the timer can't resume protection; tap Resume protection when you've finished paying."
             paused -> "Reminder at ${Pause.untilText(this)}. Automatic resume needs the optional USB setup below."
             active && Breather.remainingMs(this) > 0 -> "Your breather is on. Instagram and YouTube are unblocked until it ends."
@@ -322,6 +338,7 @@ class MainActivity : Activity() {
             addView(ui.note("Payment apps can check as they start, before Detach can react. Select the apps you pay from, for example investing or shopping apps, under Payment preferences: Detach is then already off when they open Google Pay or another UPI app. To open a UPI or bank app yourself, use Pause and open from the Quick Settings tile or the status notification: Detach opens it only once Android shows Detach as off. Opening a UPI app straight from the home screen is noticed only after it has started, which can be too late.").apply { setPadding(0, ui.dp(6), 0, 0) })
             addView(ui.note("If Google Pay still says an accessibility app is on, restart your phone once. Detach stays paused through the restart until you tap Resume protection here.").apply { setPadding(0, ui.dp(8), 0, 0) })
         })
+        addView(developerOptionsNote())
         addView(ui.space(12))
         if (!paused && DetachService.isRunning) addView(ui.secondary("Pause protection for payment") {
             Auth.confirm(this@MainActivity, "Pause for payments") {
@@ -366,6 +383,7 @@ class MainActivity : Activity() {
             if (Build.VERSION.SDK_INT >= 33) addView(ui.quiet("Add Quick Settings tile") { addPauseTile() })
             if (!Pause.canSelfEnable(this@MainActivity)) addView(disclosure("usb", "Enable automatic Resume over USB") {
                 addView(ui.note("This optional grant lets the timer, your explicit Resume tap, and opt-in app detection re-enable Detach. Without it, Android requires you to turn Detach on in Accessibility settings. Timer-only mode cannot tell whether you are still banking; choose enough time."))
+                addView(ui.note("USB debugging (under Developer options) is needed only while you run this command once from a computer. Afterwards you can turn USB debugging and Developer options off: the grant stays with Detach until it is uninstalled or the grant is revoked.").apply { setPadding(0, ui.dp(8), 0, 0) })
                 addView(ui.note(Pause.GRANT_COMMAND).apply {
                     typeface = Typeface.MONOSPACE
                     setTextIsSelectable(true)
@@ -375,6 +393,33 @@ class MainActivity : Activity() {
         })
         addView(ui.hairline())
     }
+
+    /**
+     * Some UPI and bank apps refuse while USB debugging or Developer options are on. The USB
+     * grant is a one-time `pm grant`: Android keeps it after both are switched off (until Detach
+     * is uninstalled or it is revoked), so the owner can switch them off without losing resume.
+     */
+    private fun developerOptionsNote() = column().apply {
+        tag = "developer-options"
+        setPadding(0, ui.dp(12), 0, 0)
+        val on = developerOptionsOn()
+        val granted = Pause.canSelfEnable(this@MainActivity)
+        val lead = if (on) "USB debugging or Developer options are on. " else ""
+        val grant = if (granted) {
+            "Detach's USB grant is one-time and is already in place: you can switch off USB debugging and Developer options and the grant keeps working. It stays through restarts until Detach is uninstalled or the grant is revoked. A pause that is running when the phone restarts still needs a tap on Resume protection."
+        } else {
+            "The optional USB grant needs USB debugging only while you run its command once; afterwards you can switch USB debugging and Developer options off and the grant keeps working."
+        }
+        addView(ui.note("${lead}Some UPI and bank apps refuse to open or pay while USB debugging or Developer options are on. $grant"))
+        if (on) addView(ui.quiet("Open Developer options") {
+            open(Intent(SysSettings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+        })
+    }
+
+    private fun developerOptionsOn(): Boolean = runCatching {
+        SysSettings.Global.getInt(contentResolver, SysSettings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) != 0 ||
+            SysSettings.Global.getInt(contentResolver, SysSettings.Global.ADB_ENABLED, 0) != 0
+    }.getOrDefault(false)
 
     /**
      * Only app detection can see that a selected app is still in front. In timer-only mode the
@@ -436,7 +481,7 @@ class MainActivity : Activity() {
     private fun confirmForegroundResume() {
         val visit = authorizationVisit
         val ready = Pause.canSelfEnable(this) && PauseForegroundMonitor.hasUsageAccess(this)
-        val detail = "While payment protection is paused, a separate local monitor checks foreground app packages about every 2 seconds while your screen is unlocked. It does not read screen content, save app history, or send data anywhere. It stops after resume and does not poll while the screen is off or locked. Android can delay detection or prevent it from starting.\n\nThis needs Usage Access and the optional USB grant. Timer-only mode has no app monitor and cannot know whether you are still banking. Enabling applies to your next payment pause."
+        val detail = "While payment protection is paused, a separate local monitor checks foreground app packages about every 2 seconds while your screen is unlocked. It does not read screen content, save app history, or send data anywhere. It stops after resume and does not poll while the screen is off or locked. It keeps running if you swipe Detach away from Recents; if Android stops it anyway, opening Detach before the timer is due restarts it for the same pause. Android can delay detection or prevent it from starting.\n\nThis needs Usage Access and the optional USB grant. Timer-only mode has no app monitor and cannot know whether you are still banking. If a payment pause is running, detection starts now for the rest of it."
         val dialog = AlertDialog.Builder(this)
             .setTitle("Enable local app detection?")
             .setMessage(detail)
@@ -446,6 +491,8 @@ class MainActivity : Activity() {
                 if (!visitActive || authorizationVisit != visit || isFinishing || isDestroyed) return@setPositiveButton
                 if (ready && Pause.canSelfEnable(this) && PauseForegroundMonitor.hasUsageAccess(this)) {
                     settings.resumeOnSocialForeground = true
+                    rearmDetection()
+                    Pause.refreshNotification(this)
                     render()
                 } else {
                     expanded.add("payment-options")
