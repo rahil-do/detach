@@ -60,7 +60,7 @@ aapt2 dump permissions Detach-<version>.apk
 |---|---|
 | `POST_NOTIFICATIONS` | Local notifications only: "Detach can't recognise Instagram/YouTube", and the silent "Detach is on / paused until…" status notification. |
 | `USE_BIOMETRIC` | Showing Android's own fingerprint prompt as an alternative to the Detach password. Detach only learns "confirmed" or "not confirmed". It never sees or stores fingerprint data, and uses no keys or crypto tied to it. |
-| `RECEIVE_BOOT_COMPLETED` | Restores the reminder after reboot if a pause is pending; never automatically restarts the accessibility service. |
+| `RECEIVE_BOOT_COMPLETED` | Restores the reminder after a reboot if a pause is pending (Android 15+ also sends this broadcast when a force-stopped Detach starts again; then the unchanged pause's timer and status are restored). The broadcast itself never turns the accessibility service back on. |
 | `WRITE_SECURE_SETTINGS` | **Optional USB grant, never granted by installing.** A Resume tap or a valid automatic timer/social observation can request adding only Detach's own Accessibility entry and enabling the associated flag. Existing services are preserved. Boot/update and app/notification taps cannot create automatic authority. |
 | `PACKAGE_USAGE_STATS` | **Optional Usage Access plus explicit in-app opt-in.** While paused and unlocked, query a narrow recent event window for foreground package changes; no content is read and no usage history is persisted. An old OS grant alone does not enable the feature. |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep the optional package monitor visible as a private local notification only during a bounded payment pause. Timer-only mode starts no foreground service. |

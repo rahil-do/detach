@@ -4,9 +4,12 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -91,17 +94,43 @@ class MainActivity : Activity() {
         }
     }
 
+    /** One-shot: the pause's end time was reached (the status text changes once). */
     private val pauseTick = Runnable {
         Pause.resumeIfDue(this)
         render()
     }
 
-    private val connectionTick = Runnable { render() }
+    /** One-shot: the breather ended. */
     private val breatherTick = Runnable { render() }
+
+    /**
+     * One-shot, [Pause.RECONNECT_CHECK_MS] after the screen started showing that Android has
+     * not connected Detach although it is listed as enabled: force a rebind (bounded in Pause).
+     */
+    private val reconnectCheck = Runnable { Pause.recoverStuckReconnect(this) }
+
+    /** Whatever the status shows was rendered for this state; anything else re-renders once. */
+    private var renderedStatus: String? = null
+
+    /** Pause, service and detection changes (see StatusEvents): re-render only if the status changed. */
+    private val statusChanged = Runnable { if (visitActive && rendered && statusKey() != renderedStatus) render() }
+
+    /** Detach added to or removed from the enabled accessibility services, by Android, the owner or Detach. */
+    private val servicesChanged = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = statusChanged.run()
+    }
 
     override fun onResume() {
         super.onResume()
         visitActive = true
+        StatusEvents.add(statusChanged)
+        runCatching {
+            contentResolver.registerContentObserver(
+                SysSettings.Secure.getUriFor(SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, servicesChanged,
+            )
+        }
+        // Opening Detach restores whatever a force-stop removed: the timer, the status
+        // notification, and app detection for the same pause (before its timer is due).
         Pause.resumeIfDue(this)
         rearmDetection()
         Pause.refreshNotification(this)
@@ -120,9 +149,11 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        StatusEvents.remove(statusChanged)
+        runCatching { contentResolver.unregisterContentObserver(servicesChanged) }
         root.removeCallbacks(pauseTick)
-        root.removeCallbacks(connectionTick)
         root.removeCallbacks(breatherTick)
+        root.removeCallbacks(reconnectCheck)
         super.onPause()
     }
 
@@ -145,8 +176,8 @@ class MainActivity : Activity() {
         val anchorOffset = anchor?.let { previousY - it.top } ?: 0
         android.transition.TransitionManager.endTransitions(root)
         root.removeCallbacks(pauseTick)
-        root.removeCallbacks(connectionTick)
         root.removeCallbacks(breatherTick)
+        root.removeCallbacks(reconnectCheck)
         root.removeAllViews()
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -167,10 +198,13 @@ class MainActivity : Activity() {
             if (rendered && currentStatus != lastStatus && !revealDiagnostics) Motion.enter(this)
         })
         lastStatus = currentStatus
+        renderedStatus = statusKey()
         if (paused && !Pause.isExpired(this)) {
-            root.postDelayed(pauseTick, (Pause.until(this) - System.currentTimeMillis()).coerceAtLeast(0) + 1000)
+            root.postDelayed(pauseTick, (Pause.until(this) - WallClock.now()).coerceAtLeast(0) + 1000)
         }
-        if (serviceEnabled() && !DetachService.isRunning) root.postDelayed(connectionTick, 1000)
+        // No polling while waiting for Android: the service connecting (or the list changing)
+        // re-renders through StatusEvents and the settings observer. One bounded check only.
+        if (Pause.waitingForReconnect(this)) root.postDelayed(reconnectCheck, Pause.RECONNECT_CHECK_MS)
         val breatherRemaining = Breather.remainingMs(this)
         if (breatherRemaining > 0) root.postDelayed(breatherTick, breatherRemaining + 1L)
         if (!paused && !serviceEnabled()) root.addView(setup().apply { tag = "setup" })
@@ -219,31 +253,49 @@ class MainActivity : Activity() {
         rendered = true
     }
 
-    private fun status(paused: Boolean): View {
+    /** Title and detail of the status block. A pending pause uses the notification's [PauseStatus]. */
+    private fun statusText(paused: Boolean): Pair<String, String> {
         val active = serviceEnabled() && DetachService.isRunning && !paused
         val connecting = serviceEnabled() && !DetachService.isRunning && !paused
-        val color = if (active) ui.accent else ui.caution
         val title = when {
             paused -> "Protection is paused"
             active -> "Protection is on"
             connecting -> "Waiting for Android"
             else -> "Ready when you are"
         }
-        val detail = when {
-            paused && serviceEnabled() -> "Resume requested. Waiting for Android to reconnect; protection is not confirmed yet."
-            paused && Pause.isExpired(this) -> "The pause timer is due. If automatic resume is unavailable or delayed, use Resume protection."
-            paused && PauseForegroundMonitor.wanted(this) && PauseForegroundMonitor.runningOrStarting() ->
-                "Resumes when Instagram or YouTube opens (never while a selected payment app is in front), or automatically after ${Pause.untilText(this)}. Android may deliver the timer late. You can resume sooner below."
-            paused && PauseForegroundMonitor.wanted(this) ->
-                "App detection could not start, so opening Instagram or YouTube won't resume protection. Automatic resume after ${Pause.untilText(this)}. You can resume sooner below."
-            paused && Pause.resumesAutomatically(this) -> "Automatic resume after ${Pause.untilText(this)}. Android may deliver it a little late. You can resume sooner below."
-            paused && Pause.canSelfEnable(this) -> "Reminder at ${Pause.untilText(this)}. After a restart the timer can't resume protection; tap Resume protection when you've finished paying."
-            paused -> "Reminder at ${Pause.untilText(this)}. Automatic resume needs the optional USB setup below."
+        val until = if (paused) Pause.untilText(this) else ""
+        val detail = if (paused) when (PauseStatus.of(this)) {
+            PauseStatus.RECONNECTING -> "Resume requested. Waiting for Android to reconnect; protection is not confirmed yet. If nothing changes, tap Resume protection again."
+            PauseStatus.RESUME_STALLED -> "Resume didn't complete: Android hasn't reconnected Detach and the request has expired. Tap Resume protection to try again."
+            PauseStatus.DUE -> "The pause timer is due. If automatic resume is unavailable or delayed, use Resume protection."
+            PauseStatus.DETECTION_ON ->
+                "Resumes when Instagram or YouTube opens (never while a selected payment app is in front), or automatically after about $until. Android may deliver the timer late. You can resume sooner below."
+            PauseStatus.DETECTION_STOPPED ->
+                "App detection isn't running, so opening Instagram or YouTube won't resume protection. Automatic resume after about $until. You can resume sooner below."
+            PauseStatus.AUTOMATIC -> "Automatic resume after about $until. Android may deliver it a little late. You can resume sooner below."
+            PauseStatus.MANUAL -> "Reminder at about $until. This pause can't resume by itself any more (for example after a restart or an app update); tap Resume protection when you've finished paying."
+            PauseStatus.NEEDS_USB -> "Reminder at about $until. Automatic resume needs the optional USB setup below."
+        } else when {
             active && Breather.remainingMs(this) > 0 -> "Your breather is on. Instagram and YouTube are unblocked until it ends."
             active -> "Your app choices below are being applied."
             connecting -> "Accessibility is enabled, but the service hasn’t connected yet. Protection is not confirmed."
             else -> "One Android permission to get started."
         }
+        return title to detail
+    }
+
+    /** Everything the status-dependent parts of the screen are built from. */
+    private fun statusKey(): String {
+        val paused = Pause.isPending(this)
+        val (title, detail) = statusText(paused)
+        return "$paused|${Pause.isExpired(this)}|${serviceEnabled()}|${DetachService.isRunning}|${Pause.canSelfEnable(this)}|$title|$detail"
+    }
+
+    private fun status(paused: Boolean): View {
+        val active = serviceEnabled() && DetachService.isRunning && !paused
+        val connecting = serviceEnabled() && !DetachService.isRunning && !paused
+        val color = if (active) ui.accent else ui.caution
+        val (title, detail) = statusText(paused)
         return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(View(this@MainActivity).apply { setBackgroundColor(color) }, LinearLayout.LayoutParams(ui.dp(3), ViewGroup.LayoutParams.MATCH_PARENT))

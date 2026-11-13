@@ -113,7 +113,7 @@ class StatusNotificationsTest {
         val notification = status()
         assertEquals("Protection paused", notification.extras.getString(Notification.EXTRA_TITLE))
         val text = notification.extras.getString(Notification.EXTRA_TEXT).orEmpty()
-        assertTrue(text.contains("Reminder at ${Pause.untilText(context)}"))
+        assertTrue(text.contains("Reminder at about ${Pause.untilText(context)}"))
         assertTrue(text.contains("automatic resume needs optional USB setup"))
         assertTrue(notification.actions.isNullOrEmpty())
         assertEquals(MainActivity::class.java.name, shadowOf(notification.contentIntent).savedIntent.component?.className)

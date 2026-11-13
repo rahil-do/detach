@@ -203,9 +203,18 @@ class HealthNotificationsTest {
     @Test fun `legacy app specific alerts are removed when health is initialised`() {
         manager.notify("ig".hashCode(), Notification.Builder(context, "health").setSmallIcon(R.drawable.ic_notification).build())
         manager.notify("yt".hashCode(), Notification.Builder(context, "health").setSmallIcon(R.drawable.ic_notification).build())
+        // Once per process: a fresh process starts with nothing cleared yet.
+        Health::class.java.getDeclaredField("legacyCleared").apply { isAccessible = true }.setBoolean(null, false)
         Health(context)
 
         assertNull(notifications.getNotification("ig".hashCode()))
         assertNull(notifications.getNotification("yt".hashCode()))
+    }
+
+    @Test fun `building health again for each status render does not call into the notification service`() {
+        Health(context)
+        manager.notify("ig".hashCode(), Notification.Builder(context, "health").setSmallIcon(R.drawable.ic_notification).build())
+        repeat(3) { Health(context).report() }
+        assertNotNull(notifications.getNotification("ig".hashCode()))
     }
 }

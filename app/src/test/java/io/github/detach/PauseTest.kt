@@ -19,6 +19,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowAlarmManager
 import org.robolectric.shadows.ShadowSystemClock
 import java.time.Duration
 import java.util.concurrent.Callable
@@ -109,6 +110,7 @@ class PauseTest {
 
     @Config(sdk = [28, 35])
     @Test fun `a pause has one explicit immutable reminder alarm and no repeat timer`() {
+        ShadowAlarmManager.setCanScheduleExactAlarms(true)
         val alarms = shadowOf(ctx.getSystemService(AlarmManager::class.java))
         Pause.begin(ctx)
         Pause.begin(ctx)
@@ -139,6 +141,7 @@ class PauseTest {
     }
 
     @Test fun `boot update and app opening restore only the original reminder deadline`() {
+        ShadowAlarmManager.setCanScheduleExactAlarms(true)
         grant(); setEnabledList(others)
         Pause.begin(ctx)
         val deadline = Pause.until(ctx)
@@ -286,9 +289,13 @@ class PauseTest {
 
     @Test fun `reboot and update broadcasts revoke a previously issued resume authorization`() {
         Pause.begin(ctx)
-        listOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED).forEach { action ->
+        val deliveries: List<() -> Unit> = listOf(
+            { MonitorTestSupport.reboot(ctx) },
+            { PauseReceiver().onReceive(ctx, Intent(Intent.ACTION_MY_PACKAGE_REPLACED)) },
+        )
+        deliveries.forEach { deliver ->
             assertFalse(Pause.resume(ctx))
-            PauseReceiver().onReceive(ctx, Intent(action))
+            deliver()
             assertFalse(Pause.consumeResumeAuthorization(ctx))
             assertTrue(Pause.isPending(ctx))
         }

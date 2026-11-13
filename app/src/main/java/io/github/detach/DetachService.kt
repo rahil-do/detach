@@ -223,7 +223,11 @@ class DetachService : AccessibilityService() {
         coverState.clear()
         pending = null
         pendingPackage = null
-        if (instance === this) instance = null
+        if (instance === this) {
+            instance = null
+            // Detach's screen, if open, must stop saying protection is on.
+            StatusEvents.changed()
+        }
         if (::thread.isInitialized) thread.quitSafely()
     }
 

@@ -29,9 +29,14 @@ class Health(private val context: Context) {
     private var ytBarHits = p.getInt("yt_bar_hits", 0)
 
     init {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.cancel("ig".hashCode())
-        manager.cancel("yt".hashCode())
+        // Notifications from older versions; once per process (the status screen builds a Health
+        // for every render, and each cancel is a call into the notification service).
+        if (!legacyCleared) {
+            legacyCleared = true
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.cancel("ig".hashCode())
+            manager.cancel("yt".hashCode())
+        }
     }
 
     fun seen(signal: String) {
@@ -190,5 +195,6 @@ class Health(private val context: Context) {
     companion object {
         const val ACTION_DIAGNOSTICS = "io.github.detach.action.DIAGNOSTICS"
         private const val NOTIFICATION_ID = 7003
+        @Volatile private var legacyCleared = false
     }
 }

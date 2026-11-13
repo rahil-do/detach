@@ -92,7 +92,9 @@
 
         <!--
           Detach's explicit timer may spend existing pause authority; Android's boot / update
-          broadcasts only restore reminders. Not exported, so no other app can send to it.
+          broadcasts only restore reminders (a same-boot BOOT_COMPLETED, which Android 15+ sends
+          when a force-stopped app starts again, re-arms the unchanged pause). Not exported, so no
+          other app can send to it.
         -->
         <receiver
             android:name=".PauseReceiver"

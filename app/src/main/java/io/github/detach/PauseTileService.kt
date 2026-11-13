@@ -23,6 +23,8 @@ class PauseTileService : TileService() {
         super.onStartListening()
         val tile = qsTile ?: return
         val paused = Pause.isPending(this)
+        // Restores a reminder and status that a force-stop removed; never authority.
+        if (paused) Pause.resumeIfDue(this)
         tile.label = LABEL
         tile.state = if (paused) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         if (Build.VERSION.SDK_INT >= 29) tile.subtitle = when {

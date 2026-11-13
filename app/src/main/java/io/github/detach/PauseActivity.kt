@@ -34,6 +34,8 @@ class PauseActivity : Activity() {
             // Detach's own screen is in front, so Android allows app detection lost during this
             // pause to be re-attached to it (same token and deadline).
             if (Pause.isPending(this) && !Pause.isExpired(this)) PauseForegroundMonitor.reattach(this)
+            // And the timer and status a force-stop removed (never authority).
+            if (Pause.isPending(this)) Pause.resumeIfDue(this)
             Toast.makeText(
                 this,
                 if (Pause.isPending(this)) "Detach is already paused" else "Detach isn't running",

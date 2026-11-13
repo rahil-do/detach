@@ -137,7 +137,7 @@ class AutomaticPauseTest {
         advance()
         Pause.resumeIfDue(context)
         assertFalse(Pause.consumeResumeAuthorization(context))
-        PauseReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        MonitorTestSupport.reboot(context)
         assertNull(Pause.automaticToken(context))
         Pause.onTimer(context)
         Pause.resumeIfDue(context)
@@ -197,15 +197,19 @@ class AutomaticPauseTest {
         assertFalse(Pause.consumeResumeAuthorization(context))
     }
 
-    @Test fun `automatic resume waits until accessibility is actually disabled`() {
+    @Test fun `automatic resume waits while a requested reconnect is on its way`() {
         grant()
         begin()
-        SystemSettings.Secure.putString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-            "io.github.detach/io.github.detach.DetachService")
         advance()
+        // The owner tapped Resume a moment ago: Detach is listed and the request is unexpired.
+        assertTrue(Pause.resume(context))
+        val listed = SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+        val token = Pause.automaticToken(context)
+        assertNotNull(token)
         Pause.onTimer(context)
-        assertFalse(Pause.consumeResumeAuthorization(context))
-        assertNotNull(Pause.automaticToken(context))
+        assertEquals(token, Pause.automaticToken(context))
+        assertEquals(listed, SystemSettings.Secure.getString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES))
+        assertTrue(Pause.consumeResumeAuthorization(context))
     }
 
     @Test fun `a timer resume never exempts the selected app it paused for`() {
@@ -285,7 +289,7 @@ class AutomaticPauseTest {
         grant()
         begin()
         assertTrue(Pause.resumesAutomatically(context))
-        PauseReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        MonitorTestSupport.reboot(context)
         assertTrue(Pause.isPending(context))
         assertFalse(Pause.resumesAutomatically(context))
         StatusNotifications.refresh(context)

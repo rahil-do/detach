@@ -252,7 +252,7 @@ class PauseForegroundMonitorTest {
             { Settings(context).resumeOnSocialForeground = false },
             { usageMode(AppOpsManager.MODE_IGNORED) },
             { shadowOf(context).denyPermissions(Manifest.permission.WRITE_SECURE_SETTINGS) },
-            { PauseReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED)) },
+            { MonitorTestSupport.reboot(context) },
         )
         for ((index, end) in endings.withIndex()) {
             setup()
@@ -426,7 +426,7 @@ class PauseForegroundMonitorTest {
             ComponentName(context, DetachService::class.java).flattenToString())
         refused("resume on its way")
         SystemSettings.Secure.putString(context.contentResolver, SystemSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES, "")
-        PauseReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
+        MonitorTestSupport.reboot(context)
         refused("after a restart")
         assertTrue(Pause.isPending(context))
     }
