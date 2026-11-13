@@ -48,6 +48,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Opened only from Detach's own payment widget. It pauses protection before launching
+             the selected banking app, so the banking app never starts while Detach is enabled. -->
+        <activity
+            android:name=".PaymentLaunchActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.Detach.PaymentLaunch" />
+
         <!-- Unlock window shown from the "Detach is protected" panel. Not reachable by other apps. -->
         <activity
             android:name=".UnlockActivity"
@@ -78,6 +87,19 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".PaymentWidgetProvider"
+            android:exported="false"
+            android:label="Payment apps">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.appwidget.action.APPWIDGET_OPTIONS_CHANGED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/payment_widget_info" />
         </receiver>
 
         <service

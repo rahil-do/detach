@@ -17,4 +17,6 @@
     <color name="error">#A93030</color>
     <color name="caution">#855510</color>
     <color name="press">#1F226348</color>
+    <color name="widget_surface">#F4F7F2</color>
+    <color name="widget_press">#17226348</color>
 </resources>

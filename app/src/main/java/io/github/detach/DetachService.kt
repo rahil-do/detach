@@ -617,9 +617,9 @@ class DetachService : AccessibilityService() {
          * Asks the running service to switch itself off for the set pause time. Call on the
          * main thread, after the user has been confirmed. False if the service isn't running.
          */
-        fun pauseForPayments(): Boolean {
+        fun pauseForPayments(paymentPackage: String? = null): Boolean {
             val s = instance ?: return false
-            return runCatching { s.pauseNow() }.getOrDefault(false)
+            return runCatching { s.pauseNow(paymentPackage) }.getOrDefault(false)
         }
 
         fun refreshSettings() {

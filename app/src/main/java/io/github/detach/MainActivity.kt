@@ -2,6 +2,8 @@ package io.github.detach
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
@@ -36,6 +38,7 @@ class MainActivity : Activity() {
     private val protectedDialogs = mutableSetOf<AlertDialog>()
     private var authorizationVisit = 0L
     private var visitActive = false
+    private var whatsNewDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,6 +108,7 @@ class MainActivity : Activity() {
         Pause.resumeIfDue(this)
         Pause.refreshNotification(this)
         render()
+        showWidgetUpdateOnce()
     }
 
     override fun onPause() {
@@ -320,6 +324,10 @@ class MainActivity : Activity() {
                 render()
             }
         })
+        addView(ui.secondary("Add payment widget") { addPaymentWidget() })
+        addView(ui.note("Launch selected payment apps from your home screen. Detach pauses protection before opening them.").apply {
+            setPadding(0, ui.dp(8), 0, ui.dp(8))
+        })
         addView(disclosure("payment-options", "Payment preferences") {
             addView(optionRow("Auto-pause for payment apps", "Checks selected package names, never screen content", settings.autoPausePayments) {
                 settings.autoPausePayments = it
@@ -383,6 +391,7 @@ class MainActivity : Activity() {
     private fun choosePaymentApps() {
         PaymentAppPicker.show(this) {
             DetachService.refreshSettings()
+            PaymentWidgetProvider.updateAll(this)
             toast("Payment apps saved on this device")
             render()
         }
@@ -633,6 +642,41 @@ class MainActivity : Activity() {
     private fun needsNotificationPermission() = Build.VERSION.SDK_INT >= 33 &&
         checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
 
+    private fun showWidgetUpdateOnce() {
+        if (whatsNewDialog?.isShowing == true) return
+        val updates = getSharedPreferences(UPDATE_PREFS, MODE_PRIVATE)
+        if (updates.getBoolean(WIDGET_UPDATE_KEY, false)) return
+        // Record before showing so a rotation or process recreation cannot repeat the one-time notice.
+        updates.edit().putBoolean(WIDGET_UPDATE_KEY, true).apply()
+        whatsNewDialog = AlertDialog.Builder(this)
+            .setTitle("New: Payment widget")
+            .setMessage(
+                "Open selected UPI and banking apps directly from your home screen. " +
+                    "Detach pauses Accessibility before the payment app opens.\n\n" +
+                    "Resize it from 1×1 up to 2×4. The layout automatically adapts from one to ten apps."
+            )
+            .setNegativeButton("Not now", null)
+            .setPositiveButton("Add widget") { _, _ -> addPaymentWidget() }
+            .create().also { dialog ->
+                dialog.setOnShowListener { ui.style(dialog) }
+                dialog.setOnDismissListener { if (whatsNewDialog === dialog) whatsNewDialog = null }
+                dialog.show()
+            }
+    }
+
+    private fun addPaymentWidget() {
+        val manager = AppWidgetManager.getInstance(this)
+        val provider = ComponentName(this, PaymentWidgetProvider::class.java)
+        if (manager.isRequestPinAppWidgetSupported && manager.requestPinAppWidget(provider, null, null)) return
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Add the payment widget")
+            .setMessage("Touch and hold an empty area of your home screen, choose Widgets, find Detach, then drag Payment apps onto the home screen.")
+            .setPositiveButton("Got it", null)
+            .create()
+        dialog.setOnShowListener { ui.style(dialog) }
+        dialog.show()
+    }
+
     private fun serviceEnabled(): Boolean {
         val services = SysSettings.Secure.getString(contentResolver, SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
         return services.split(':').any { it.startsWith("$packageName/") }
@@ -643,4 +687,9 @@ class MainActivity : Activity() {
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+
+    internal companion object {
+        const val UPDATE_PREFS = "update_notices"
+        const val WIDGET_UPDATE_KEY = "payment_widget_v1"
+    }
 }

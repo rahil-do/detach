@@ -91,6 +91,13 @@ object Pause {
     fun canSelfEnable(context: Context) =
         context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
 
+    /** Whether this app's accessibility service is still listed as enabled by Android. */
+    fun isServiceEnabled(context: Context): Boolean = runCatching {
+        val service = ComponentName(context, DetachService::class.java)
+        SysSettings.Secure.getString(context.contentResolver, SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            .orEmpty().split(':').any { ComponentName.unflattenFromString(it) == service }
+    }.getOrDefault(true)
+
     /**
      * Starts a pause. Called by the running service just before it switches itself off.
      * Records the reminder time before the service stops, then schedules one reminder alarm.
@@ -202,12 +209,7 @@ object Pause {
 
     private fun resumeAutomatically(context: Context, token: String, social: Boolean): Boolean {
         if (token != automaticToken(context)) return false
-        val service = ComponentName(context, DetachService::class.java)
-        val enabled = runCatching {
-            SysSettings.Secure.getString(context.contentResolver, SysSettings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-                .orEmpty().split(':').any { ComponentName.unflattenFromString(it) == service }
-        }.getOrDefault(true)
-        if (enabled) return false
+        if (isServiceEnabled(context)) return false
         val stored = prefs(context)
         if (!stored.edit().putBoolean(KEY_ATTEMPTED, true).commit()) return false
         if (!canSelfEnable(context)) {
